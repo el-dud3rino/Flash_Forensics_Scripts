@@ -610,6 +610,18 @@ $HtmlContent = @'
     </div>
     <div id="sidebar">
         <div class="brand">FFS Dashboard</div>
+        
+        <div style="padding: 10px; margin: 10px 0; border-bottom: 1px solid var(--glass-border);">
+            <label style="display:flex; align-items:center; color: var(--text-main); font-weight: bold; cursor: pointer; font-size: 0.9rem;">
+                <input type="checkbox" id="compareModeToggle" style="margin-right:8px;" onchange="toggleCompareMode(this.checked)">
+                Enable Compare Mode
+            </label>
+            <div id="compareControls" style="display:none; margin-top:10px; flex-direction:column; gap:8px;">
+                <button onclick="selectAllOS('Windows')" style="background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); padding:5px; border-radius:4px; cursor:pointer;">Select All Windows</button>
+                <button onclick="selectAllOS('Linux')" style="background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); padding:5px; border-radius:4px; cursor:pointer;">Select All Linux</button>
+            </div>
+        </div>
+
         <ul class="computer-list" id="computerList"></ul>
     </div>
     <div id="main">
@@ -719,6 +731,10 @@ $HtmlContent = @'
 
         let groupedSystems = {};
         let selectedHostname = null;
+        
+        window.isCompareMode = false;
+        window.selectedHosts = new Set();
+        window.hostOSMap = {};
 
         if (typeof dfirData === 'undefined') {
             document.getElementById('tableContainer').innerHTML = '<div class="empty-state" style="color:var(--danger)">Error: data.js could not be loaded or is empty. Ensure Invoke-DFIRCollection.ps1 finished successfully.</div>';
@@ -726,8 +742,67 @@ $HtmlContent = @'
             initApp();
         }
 
-        function initApp() {
+        function toggleCompareMode(enabled) {
+            window.isCompareMode = enabled;
+            document.getElementById('compareControls').style.display = enabled ? 'flex' : 'none';
+            renderComputerList();
+            
+            if (enabled) {
+                if (selectedHostname) window.selectedHosts.add(selectedHostname);
+                document.getElementById('computerTitle').textContent = "Compare Mode Active (" + window.selectedHosts.size + " selected)";
+                document.getElementById('timestampBadge').innerHTML = ""; // No timestamp in compare mode
+                renderTable(currentTab);
+            } else {
+                if (window.selectedHosts.size > 0 && !selectedHostname) {
+                    selectedHostname = Array.from(window.selectedHosts)[0];
+                }
+                selectHostname(selectedHostname);
+            }
+        }
+        
+        function selectAllOS(osType) {
+            window.selectedHosts.clear();
+            Object.keys(groupedSystems).forEach(name => {
+                if (window.hostOSMap[name] === osType) {
+                    window.selectedHosts.add(name);
+                }
+            });
+            renderComputerList();
+            document.getElementById('computerTitle').textContent = "Compare Mode Active (" + window.selectedHosts.size + " selected)";
+            renderTable(currentTab);
+        }
+
+        function toggleHostSelection(name, checkbox) {
+            if (checkbox.checked) {
+                window.selectedHosts.add(name);
+            } else {
+                window.selectedHosts.delete(name);
+            }
+            document.getElementById('computerTitle').textContent = "Compare Mode Active (" + window.selectedHosts.size + " selected)";
+            renderTable(currentTab);
+        }
+
+        function renderComputerList() {
             const list = document.getElementById('computerList');
+            list.innerHTML = '';
+            Object.keys(groupedSystems).forEach(name => {
+                const li = document.createElement('li');
+                li.className = 'computer-item';
+                if (window.isCompareMode) {
+                    li.innerHTML = `<label style="display:flex; align-items:center; cursor:pointer; width:100%;">
+                        <input type="checkbox" style="margin-right:8px;" ${window.selectedHosts.has(name) ? 'checked' : ''} onchange="toggleHostSelection('${name}', this)">
+                        ${name}
+                    </label>`;
+                } else {
+                    li.textContent = name;
+                    li.onclick = () => selectHostname(name);
+                    if (name === selectedHostname) li.classList.add('active');
+                }
+                list.appendChild(li);
+            });
+        }
+
+        function initApp() {
             let systems = Array.isArray(dfirData) ? dfirData : [dfirData];
             
             groupedSystems = {};
@@ -744,12 +819,18 @@ $HtmlContent = @'
                     return tb.localeCompare(ta);
                 });
                 
-                const li = document.createElement('li');
-                li.className = 'computer-item';
-                li.textContent = name;
-                li.onclick = () => selectHostname(name);
-                list.appendChild(li);
+                let os = 'Windows';
+                const sysInfo = groupedSystems[name][0].SystemInfo;
+                if (sysInfo && Array.isArray(sysInfo)) {
+                    sysInfo.forEach(s => {
+                        let valStr = Object.values(s).join(' ').toLowerCase();
+                        if (valStr.includes('linux')) os = 'Linux';
+                    });
+                }
+                window.hostOSMap[name] = os;
             });
+            
+            renderComputerList();
             
             if (Object.keys(groupedSystems).length > 0) {
                 selectHostname(Object.keys(groupedSystems)[0]);
@@ -757,12 +838,11 @@ $HtmlContent = @'
         }
 
         function selectHostname(name) {
+            if (window.isCompareMode) return;
             selectedHostname = name;
             document.getElementById('computerTitle').textContent = name;
             
-            document.querySelectorAll('.computer-item').forEach(el => {
-                el.classList.toggle('active', el.textContent === name);
-            });
+            renderComputerList();
             
             const badgeContainer = document.getElementById('timestampBadge');
             const runs = groupedSystems[name];
@@ -1204,9 +1284,25 @@ $HtmlContent = @'
             return html;
         }
 
+        const noisyKeys = ['Id', 'ProcessId', 'ParentProcessId', 'SessionId', 'CPU', 'WorkingSetSize', 'StartTime', 'TimeCreated', 'NextRunTime', 'LastRunTime', 'InstallDate', 'OwningProcess', 'RecordId', 'SessionID', 'RunTime'];
+
+        function hashArtifact(obj) {
+            let clean = {};
+            Object.keys(obj).sort().forEach(k => {
+                if (!noisyKeys.includes(k) && k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On') {
+                    clean[k] = obj[k];
+                }
+            });
+            return JSON.stringify(clean);
+        }
+
         function renderTable(tabName) {
             const container = document.getElementById('tableContainer');
-            if (!currentComputer) return;
+            if (!currentComputer && !window.isCompareMode) return;
+            if (window.isCompareMode && window.selectedHosts.size === 0) {
+                container.innerHTML = '<div class="empty-state">Select one or more hosts from the sidebar to compare them.</div>';
+                return;
+            }
             
             let activeFilterId = null;
             let activeFilterStart = null;
@@ -1215,20 +1311,116 @@ $HtmlContent = @'
                 try { activeFilterStart = document.activeElement.selectionStart; } catch(e) {}
             }
             
-            if (tabName === 'Users') {
-                const local = currentComputer['LocalUsers'] ? (Array.isArray(currentComputer['LocalUsers']) ? currentComputer['LocalUsers'] : [currentComputer['LocalUsers']]) : [];
-                const priv = currentComputer['PrivilegedAccess'] ? (Array.isArray(currentComputer['PrivilegedAccess']) ? currentComputer['PrivilegedAccess'] : [currentComputer['PrivilegedAccess']]) : [];
-                
-                let html = '';
-                if (local.length > 0) html += buildTableHTML(local, '<h2 style="color:var(--accent);margin-bottom:10px;">Local Users</h2>', 'local-users');
-                if (priv.length > 0) html += buildTableHTML(priv, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">Privileged Access</h2>', 'priv-users');
-                
-                if (html === '') {
-                    container.innerHTML = '<div class="empty-state">No users or privileges found.</div>';
-                } else {
-                    container.innerHTML = html;
+            let html = '';
+            
+            // COMPARE MODE AGGREGATION
+            if (window.isCompareMode) {
+                let allItems = [];
+                window.selectedHosts.forEach(hostname => {
+                    if (groupedSystems[hostname] && groupedSystems[hostname].length > 0) {
+                        const sys = groupedSystems[hostname][0];
+                        if (tabName === 'Users') {
+                            const l = sys['LocalUsers'] ? (Array.isArray(sys['LocalUsers']) ? sys['LocalUsers'] : [sys['LocalUsers']]) : [];
+                            const p = sys['PrivilegedAccess'] ? (Array.isArray(sys['PrivilegedAccess']) ? sys['PrivilegedAccess'] : [sys['PrivilegedAccess']]) : [];
+                            l.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'LocalUsers'; copy._System = hostname; allItems.push(copy); });
+                            p.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'PrivilegedAccess'; copy._System = hostname; allItems.push(copy); });
+                        } else {
+                            let sysData = sys[tabName];
+                            if (sysData) {
+                                let arr = Array.isArray(sysData) ? sysData : [sysData];
+                                arr.forEach(i => { let copy = Object.assign({}, i); copy._System = hostname; allItems.push(copy); });
+                            }
+                        }
+                    }
+                });
+
+                if (allItems.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No data collected for ' + tabName + ' across selected hosts.</div>';
+                    return;
                 }
-            } else {
+
+                const stacked = {};
+                allItems.forEach(item => {
+                    const hash = hashArtifact(item);
+                    if (!stacked[hash]) {
+                        stacked[hash] = {
+                            Count: 0,
+                            SeenOn: new Set(),
+                            Data: Object.assign({}, item)
+                        };
+                    }
+                    stacked[hash].Count++;
+                    stacked[hash].SeenOn.add(item._System);
+                });
+
+                let stackedArr = Object.values(stacked).map(s => {
+                    let finalObj = { Count: s.Count, 'Seen On': Array.from(s.SeenOn).sort().join(', ') };
+                    Object.assign(finalObj, s.Data);
+                    return finalObj;
+                });
+                
+                // Sort by Count ascending to highlight outliers, if no explicit sort
+                if (!currentSortColumn) {
+                    currentSortColumn = 'Count';
+                    currentSortDirection = 'asc';
+                }
+
+                if (tabName === 'Users') {
+                    const local = stackedArr.filter(i => i._CompareType === 'LocalUsers');
+                    const priv = stackedArr.filter(i => i._CompareType === 'PrivilegedAccess');
+                    local.forEach(i => { delete i._CompareType; delete i._System; });
+                    priv.forEach(i => { delete i._CompareType; delete i._System; });
+                    
+                    if (local.length > 0) html += buildTableHTML(local, '<h2 style="color:var(--accent);margin-bottom:10px;">Local Users (Compare Mode)</h2>', 'local-users');
+                    if (priv.length > 0) html += buildTableHTML(priv, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">Privileged Access (Compare Mode)</h2>', 'priv-users');
+                    container.innerHTML = html;
+                } else {
+                    stackedArr.forEach(i => { delete i._System; });
+                    
+                    let shouldGroup = false;
+                    let groupProp = 'Source';
+                    if (tabName === 'EventLogs' && window.eventLogGroupMode) { shouldGroup = true; groupProp = 'EventId'; }
+                    else if (tabName !== 'EventLogs' && stackedArr.some(i => i.Source)) { shouldGroup = true; groupProp = 'Source'; }
+                    
+                    if (shouldGroup) {
+                        const groupedBySource = {};
+                        stackedArr.forEach(item => {
+                            const src = item[groupProp] || ('Unknown ' + groupProp);
+                            if (!groupedBySource[src]) groupedBySource[src] = [];
+                            groupedBySource[src].push(item);
+                        });
+                        Object.keys(groupedBySource).forEach((src, idx) => {
+                            const groupId = 'group-' + tabName + '-' + idx;
+                            const headerText = groupProp === 'EventId' ? 'Event ID: ' + src : src;
+                            html += `
+                                <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                     onclick="const e = document.getElementById('${groupId}'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                     onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                     onmouseout="this.style.background='transparent'">
+                                    <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">${escapeHtml(headerText)}</h2>
+                                    <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                                </div>
+                                <div id="${groupId}">${buildTableHTML(groupedBySource[src], '', groupId)}</div>
+                            `;
+                        });
+                        container.innerHTML = html;
+                    } else {
+                        container.innerHTML = buildTableHTML(stackedArr, '', 'main-table');
+                    }
+                }
+            } 
+            // SINGLE HOST MODE
+            else {
+                if (tabName === 'Users') {
+                    const local = currentComputer['LocalUsers'] ? (Array.isArray(currentComputer['LocalUsers']) ? currentComputer['LocalUsers'] : [currentComputer['LocalUsers']]) : [];
+                    const priv = currentComputer['PrivilegedAccess'] ? (Array.isArray(currentComputer['PrivilegedAccess']) ? currentComputer['PrivilegedAccess'] : [currentComputer['PrivilegedAccess']]) : [];
+                    
+                    if (local.length > 0) html += buildTableHTML(local, '<h2 style="color:var(--accent);margin-bottom:10px;">Local Users</h2>', 'local-users');
+                    if (priv.length > 0) html += buildTableHTML(priv, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">Privileged Access</h2>', 'priv-users');
+                    
+                    if (html === '') container.innerHTML = '<div class="empty-state">No users or privileges found.</div>';
+                    else container.innerHTML = html;
+                } else {
                 const dataArray = currentComputer[tabName];
                 if (!dataArray || dataArray.length === 0) {
                     container.innerHTML = '<div class="empty-state">No data collected for ' + tabName + '.</div>';
@@ -1294,6 +1486,7 @@ $HtmlContent = @'
                     container.innerHTML = html;
                 }
             }
+            } // Close the SINGLE HOST MODE else block
             
             if (activeFilterId) {
                 const filterElem = document.getElementById(activeFilterId);
@@ -1679,8 +1872,8 @@ $HtmlContent = @'
             Object.keys(grouped).forEach(cat => {
                 const titleHtml = `<div class="group-header" style="margin-top:20px; margin-bottom:10px; font-size:1.1rem; font-weight:bold; color:var(--accent-hover);">${cat}</div>`;
                 const rawData = grouped[cat].map(g => {
-                    let d = Object.assign({}, g.data);
-                    d['_System'] = g.system; 
+                    let d = { 'System': g.system };
+                    Object.assign(d, g.data);
                     return d;
                 });
                 html += buildTableHTML(rawData, titleHtml, 'flagged-' + cat);
