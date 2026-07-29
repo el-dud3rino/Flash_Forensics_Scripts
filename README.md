@@ -7,6 +7,7 @@ A powerful, agentless Digital Forensics and Incident Response (DFIR) collection 
 - **Cross-Platform & Agentless**: Collects from Windows (via WinRM `Invoke-Command` or locally) and Linux (via native `ssh.exe` pipe), requiring zero agent installations.
 - **Fileless Linux Execution**: The Python payload (`Get-LinuxDFIRSystemData.py`) is piped directly into the remote Linux system's memory over SSH. No scripts are dropped to the disk of the target!
 - **Interactive HTML Dashboard**: Automatically generates a dark-themed, premium HTML dashboard (`index.html`) that works completely offline with zero web server requirements. Features a collapsible sidebar to maximize screen real-estate.
+- **Triage Flagging (New!)**: Easily bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are aggregated into an executive summary view, which can be instantly exported to a CSV for your final incident report.
 - **Temporal Datasets**: Each run creates a timestamped dataset folder (e.g., `Host-YYYY-MM-DD_HHMMZ`), allowing you to review and compare historical captures of the same system.
 - **Global Search**: Search instantly across all categories on a specific system or sweep across all collected systems globally (both latest datasets and all-time history).
 - **Raw Data Export**: Also exports standard CSV files for each artifact type per machine, ideal for ingestion into SIEMs or long-term archiving.
@@ -22,6 +23,9 @@ For every targeted system, the script seamlessly maps cross-platform data:
 - **System Persistence**: Evaluates `Run/RunOnce` keys, BITS jobs, and `BootExecute` on Windows. Evaluates bash profiles, `rc.local`, and `authorized_keys` on Linux. 
 - **Startup Files**: Enumerates system and per-user Startup/autostart folders on both OSes.
 - **Execution Evidence**: Top 200 Windows Prefetch files, PSReadLine PowerShell History, Linux `sudo` executions, and Linux bash history. Features a built-in Javascript parser to directly import Eric Zimmerman `PECmd` CSV exports!
+- **Installed Software**: Name, Version, Publisher, Install Date (Windows via Registry).
+- **Firewall Rules**: Display Name, Profile, Direction, Action (Windows).
+- **RDP Connections**: Aggregates Inbound RDP (Event Logs 21, 24, 25) and Outbound RDP (Event Log 1024, Terminal Server Client Registry) providing Source/Destination IP mapping.
 - **Event Logs (Windows Core Logs)**:
   - `4103`: PowerShell Module Logging
   - `4104`: PowerShell Script Block Logging

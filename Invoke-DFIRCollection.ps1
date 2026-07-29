@@ -444,6 +444,23 @@ $HtmlContent = @'
             white-space: normal;
             word-break: break-word;
         }
+        .flag-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: transform 0.2s, color 0.2s;
+            padding: 0;
+            margin-right: 5px;
+        }
+        .flag-btn:hover {
+            transform: scale(1.2);
+            color: var(--accent);
+        }
+        .flag-btn.flagged {
+            color: var(--danger);
+        }
         td:hover {
             background: rgba(255,255,255,0.05);
         }
@@ -619,19 +636,23 @@ $HtmlContent = @'
             </div>
         </div>
         <div class="tabs" id="tabs">
-            <div class="tab" onclick="switchTab('SystemInfo')">System Info</div>
-            <div class="tab" onclick="switchTab('Processes')">Processes</div>
-            <div class="tab" onclick="switchTab('Services')">Services</div>
-            <div class="tab" onclick="switchTab('ScheduledTasks')">Scheduled Tasks</div>
-            <div class="tab" onclick="switchTab('NetworkConnections')">Network Connections</div>
-            <div class="tab" onclick="switchTab('Users')">Users & Privileges</div>
-            <div class="tab" onclick="switchTab('SystemPersistence')">System Persistence</div>
-            <div class="tab" onclick="switchTab('StartupFiles')">Startup Files</div>
-            <div class="tab" onclick="switchTab('ExecutionEvidence')">Execution Evidence</div>
-            <div class="tab" onclick="switchTab('EventLogs')">Event Logs</div>
-            <div class="tab" style="background: var(--accent); color: white;" onclick="switchTab('ProcessTree')">Process Tree</div>
-            <div class="tab" style="background: var(--accent); color: white;" onclick="switchTab('Timeline')">Timeline View</div>
-            <div class="tab" id="tabSearchResults" style="display: none;" onclick="switchTab('SearchResults')">Search Results</div>
+            <div class="tab" data-tab="SystemInfo" onclick="switchTab('SystemInfo')">Sys Info</div>
+            <div class="tab" data-tab="Processes" onclick="switchTab('Processes')">Processes</div>
+            <div class="tab" data-tab="Services" onclick="switchTab('Services')">Services</div>
+            <div class="tab" data-tab="ScheduledTasks" onclick="switchTab('ScheduledTasks')">Tasks</div>
+            <div class="tab" data-tab="NetworkConnections" onclick="switchTab('NetworkConnections')">Net Conns</div>
+            <div class="tab" data-tab="Users" onclick="switchTab('Users')">Users</div>
+            <div class="tab" data-tab="SystemPersistence" onclick="switchTab('SystemPersistence')">Persistence</div>
+            <div class="tab" data-tab="StartupFiles" onclick="switchTab('StartupFiles')">Startup</div>
+            <div class="tab" data-tab="ExecutionEvidence" onclick="switchTab('ExecutionEvidence')">Exec Evidence</div>
+            <div class="tab" data-tab="EventLogs" onclick="switchTab('EventLogs')">Event Logs</div>
+            <div class="tab" data-tab="InstalledSoftware" onclick="switchTab('InstalledSoftware')">Software</div>
+            <div class="tab" data-tab="FirewallRules" onclick="switchTab('FirewallRules')">Firewall</div>
+            <div class="tab" data-tab="RDPConnections" onclick="switchTab('RDPConnections')">RDP</div>
+            <div class="tab" data-tab="ProcessTree" style="background: var(--accent); color: white;" onclick="switchTab('ProcessTree')">Proc Tree</div>
+            <div class="tab" data-tab="Timeline" style="background: var(--accent); color: white;" onclick="switchTab('Timeline')">Timeline</div>
+            <div class="tab" data-tab="FlaggedItems" onclick="switchTab('FlaggedItems')" style="color: var(--danger); font-weight: bold;">&#128681; Flagged</div>
+            <div class="tab" data-tab="SearchResults" id="tabSearchResults" style="display: none;" onclick="switchTab('SearchResults')">Search Results</div>
         </div>
         <div class="content-area">
             <div class="glass-panel">
@@ -922,7 +943,7 @@ $HtmlContent = @'
             }
             
             document.querySelectorAll('.tab').forEach(t => {
-                if(t.innerText.replace(/\s+/g, '') === tabId || (t.innerText === 'Timeline View' && tabId === 'Timeline')) {
+                if(t.dataset.tab === tabId) {
                     t.classList.add('active');
                 } else {
                     t.classList.remove('active');
@@ -935,6 +956,8 @@ $HtmlContent = @'
                 renderTimeline();
             } else if (tabId === 'ProcessTree') {
                 renderProcessTree();
+            } else if (tabId === 'FlaggedItems') {
+                renderFlaggedItems();
             } else {
                 renderTable(tabId);
             }
@@ -1102,6 +1125,9 @@ $HtmlContent = @'
             }
             
             let html = titleHtml + '<table><thead><tr>';
+            if (currentTab !== 'FlaggedItems') {
+                html += '<th style="width:50px; text-align:center;">Flag</th>';
+            }
             keys.forEach(k => {
                 let sortIndicator = "";
                 if (currentSortColumn === k) {
@@ -1126,11 +1152,20 @@ $HtmlContent = @'
             html += '</tr></thead><tbody>';
             
             if (arr.length === 0) {
-                html += `<tr><td colspan="${keys.length}"><div class="empty-state">All items are hidden by your filters.</div></td></tr>`;
+                html += `<tr><td colspan="${keys.length + 1}"><div class="empty-state">All items are hidden by your filters.</div></td></tr>`;
             } else {
+            window.renderedItems = window.renderedItems || {};
             arr.forEach(item => {
                 const trId = 'tr-' + Math.random().toString(36).substr(2, 9);
+                window.renderedItems[trId] = { system: selectedHostname, category: currentTab, data: item };
                 html += `<tr id="${trId}-main">`;
+                
+                if (currentTab !== 'FlaggedItems') {
+                    const isFlagged = isItemFlagged(item) ? 'flagged' : '';
+                    const flagIcon = isItemFlagged(item) ? '&#128681;' : '&#9872;';
+                    html += `<td style="text-align:center; vertical-align:middle;"><button class="flag-btn ${isFlagged}" onclick="toggleFlag('${trId}', event)" title="Flag for later evaluation">${flagIcon}</button></td>`;
+                }
+                
                 keys.forEach((key, kIdx) => {
                     let val = item ? item[key] : null;
                     if (key.includes('Time') || key.includes('Date')) {
@@ -1139,7 +1174,7 @@ $HtmlContent = @'
                             if (d) {
                                 val = d.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
                             } else {
-                                val = null;
+                                val = val ? val : "N/A";
                             }
                         } catch(e) {}
                     }
@@ -1156,8 +1191,9 @@ $HtmlContent = @'
                 html += '</tr>';
                 if (currentTab === 'EventLogs') {
                     const fullData = item ? Object.keys(item).map(k => `<strong style="color:var(--accent-hover);">${escapeHtml(k)}:</strong> ${escapeHtml(item[k])}`).join('<br>') : '';
+                    const colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
                     html += `<tr id="${trId}-exp" style="display:none; background: rgba(0,0,0,0.2);">
-                               <td colspan="${keys.length}" style="padding:15px; border-left: 3px solid var(--accent);">
+                               <td colspan="${colSpanCount}" style="padding:15px; border-left: 3px solid var(--accent);">
                                  <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; color:var(--text);">${fullData}</div>
                                </td>
                              </tr>`;
@@ -1545,6 +1581,150 @@ $HtmlContent = @'
             container.innerHTML = html;
         }
         
+        function getFlaggedItems() {
+            try { 
+                let items = JSON.parse(localStorage.getItem('ffs_flagged_items')) || []; 
+                if (typeof groupedSystems !== 'undefined' && Object.keys(groupedSystems).length > 0) {
+                    const validSystems = new Set(Object.keys(groupedSystems));
+                    const originalLength = items.length;
+                    items = items.filter(f => validSystems.has(f.system));
+                    if (items.length < originalLength) {
+                        saveFlaggedItems(items);
+                    }
+                }
+                return items;
+            } catch(e) { return []; }
+        }
+        
+        function saveFlaggedItems(items) {
+            localStorage.setItem('ffs_flagged_items', JSON.stringify(items));
+        }
+        
+        function hashItem(item) {
+            return JSON.stringify(item);
+        }
+        
+        window.showAllFlaggedHosts = false;
+        function toggleFlaggedHosts(isChecked) {
+            window.showAllFlaggedHosts = isChecked;
+            renderFlaggedItems();
+        }
+
+        function isItemFlagged(item) {
+            const flags = getFlaggedItems();
+            const str = hashItem(item);
+            return flags.some(f => hashItem(f.data) === str);
+        }
+
+        function toggleFlag(trId, event) {
+            event.stopPropagation();
+            const btn = event.currentTarget;
+            const itemObj = window.renderedItems[trId];
+            if (!itemObj) return;
+            
+            let flags = getFlaggedItems();
+            const str = hashItem(itemObj.data);
+            const idx = flags.findIndex(f => hashItem(f.data) === str);
+            
+            if (idx >= 0) {
+                flags.splice(idx, 1);
+                btn.classList.remove('flagged');
+                btn.innerHTML = '&#9872;';
+            } else {
+                flags.push(itemObj);
+                btn.classList.add('flagged');
+                btn.innerHTML = '&#128681;';
+            }
+            saveFlaggedItems(flags);
+            
+            if (currentTab === 'FlaggedItems') {
+                renderFlaggedItems();
+            }
+        }
+        
+        function renderFlaggedItems() {
+            const container = document.getElementById('tableContainer');
+            let flags = getFlaggedItems();
+            
+            if (!window.showAllFlaggedHosts && selectedHostname) {
+                flags = flags.filter(f => f.system === selectedHostname);
+            }
+            
+            const toggleHtml = `
+            <div style="margin-bottom: 15px; display:flex; gap:15px; align-items:center;">
+                <button onclick="exportFlaggedItems()" style="background:var(--accent); color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; font-weight:bold; transition: background 0.2s;">&#128190; Export Flagged Items to CSV</button>
+                <label style="color:var(--text-main); font-weight:bold; cursor:pointer; display:flex; align-items:center;">
+                    <input type="checkbox" style="margin-right:6px;" ${window.showAllFlaggedHosts ? 'checked' : ''} onchange="toggleFlaggedHosts(this.checked)"> 
+                    Include all hosts in dataset
+                </label>
+            </div>`;
+
+            if (flags.length === 0) {
+                let msg = '<div class="empty-state">No items have been flagged yet. Click the &#9872; icon on any row to bookmark it.</div>';
+                if (!window.showAllFlaggedHosts && getFlaggedItems().length > 0) {
+                     msg = '<div class="empty-state">No flagged items for this host. Check "Include all hosts" or select another host.</div>';
+                }
+                container.innerHTML = toggleHtml + msg;
+                return;
+            }
+            
+            let html = toggleHtml;
+            
+            const grouped = {};
+            flags.forEach(f => {
+                if (!grouped[f.category]) grouped[f.category] = [];
+                grouped[f.category].push(f);
+            });
+            
+            Object.keys(grouped).forEach(cat => {
+                const titleHtml = `<div class="group-header" style="margin-top:20px; margin-bottom:10px; font-size:1.1rem; font-weight:bold; color:var(--accent-hover);">${cat}</div>`;
+                const rawData = grouped[cat].map(g => {
+                    let d = Object.assign({}, g.data);
+                    d['_System'] = g.system; 
+                    return d;
+                });
+                html += buildTableHTML(rawData, titleHtml, 'flagged-' + cat);
+            });
+            
+            container.innerHTML = html;
+        }
+
+        function exportFlaggedItems() {
+            let flags = getFlaggedItems();
+            if (!window.showAllFlaggedHosts && selectedHostname) {
+                flags = flags.filter(f => f.system === selectedHostname);
+            }
+            if (flags.length === 0) return;
+            
+            let csvContent = "data:text/csv;charset=utf-8,";
+            let allKeys = new Set(['System', 'Category']);
+            flags.forEach(f => {
+                if (f.data) Object.keys(f.data).forEach(k => allKeys.add(k));
+            });
+            let keys = Array.from(allKeys);
+            
+            csvContent += keys.map(k => `"${k}"`).join(",") + "\r\n";
+            
+            flags.forEach(f => {
+                let row = keys.map(k => {
+                    if (k === 'System') return `"${(f.system||'').toString().replace(/"/g, '""')}"`;
+                    if (k === 'Category') return `"${(f.category||'').toString().replace(/"/g, '""')}"`;
+                    let val = f.data[k];
+                    if (val === null || val === undefined) val = "";
+                    return `"${val.toString().replace(/"/g, '""')}"`;
+                });
+                csvContent += row.join(",") + "\r\n";
+            });
+            
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "FFS_Flagged_Items.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
         document.querySelector('.tab').classList.add('active');
     </script>
 </body>

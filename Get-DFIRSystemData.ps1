@@ -24,6 +24,10 @@ $Results = @{
     SystemInfo = @()
     ExecutionEvidence = @()
     PrivilegedAccess = @()
+    USBHistory = @()
+    InstalledSoftware = @()
+    FirewallRules = @()
+    RDPConnections = @()
     ComputerName = $env:COMPUTERNAME
     Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
@@ -468,5 +472,134 @@ try {
 } catch {
     Write-Warning "Failed to collect Privileged Access: $_"
 }
+
+try {
+    # 11. USB History
+    $USBHistory = @()
+    $USBKey = "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR"
+    if (Test-Path $USBKey) {
+        $Devices = Get-ChildItem -Path $USBKey -ErrorAction SilentlyContinue
+        foreach ($Dev in $Devices) {
+            $SubKeys = Get-ChildItem -Path $Dev.PSPath -ErrorAction SilentlyContinue
+            foreach ($Sub in $SubKeys) {
+                $Props = Get-ItemProperty -Path $Sub.PSPath -ErrorAction SilentlyContinue
+                $USBHistory += [PSCustomObject]@{
+                    DeviceName = $Props.FriendlyName
+                    DeviceID = $Sub.PSChildName
+                    HardwareID = ($Props.HardwareID -join ", ")
+                    Mfg = $Props.Mfg
+                }
+            }
+        }
+    }
+    $Results.USBHistory = $USBHistory
+} catch { Write-Warning "Failed to collect USB History: $_" }
+
+try {
+    # 12. Installed Software
+    $Software = @()
+    $RegPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($Path in $RegPaths) {
+        $Items = Get-ItemProperty $Path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName }
+        foreach ($Item in $Items) {
+            $Software += [PSCustomObject]@{
+                DisplayName = $Item.DisplayName
+                DisplayVersion = $Item.DisplayVersion
+                Publisher = $Item.Publisher
+                InstallDate = $Item.InstallDate
+                InstallLocation = $Item.InstallLocation
+            }
+        }
+    }
+    $Results.InstalledSoftware = $Software
+} catch { Write-Warning "Failed to collect Installed Software: $_" }
+
+try {
+    # 13. Firewall Rules
+    $Results.FirewallRules = Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' } | Select-Object DisplayName, @{Name='Profile';Expression={$_.Profile.ToString()}}, @{Name='Direction';Expression={$_.Direction.ToString()}}, @{Name='Action';Expression={$_.Action.ToString()}}
+} catch { Write-Warning "Failed to collect Firewall Rules: $_" }
+
+try {
+    # 14. RDP Connections
+    $RDPData = @()
+    
+    # INBOUND RDP (LocalSessionManager)
+    $InboundEvents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; Id=21, 24, 25} -MaxEvents 50 -ErrorAction SilentlyContinue
+    foreach ($E in $InboundEvents) {
+        $xml = [xml]$E.ToXml()
+        $EventData = @{}
+        if ($xml.Event.UserData.EventXML) {
+            foreach ($node in $xml.Event.UserData.EventXML.ChildNodes) {
+                $EventData[$node.Name] = $node.InnerText
+            }
+        }
+        $Address = if ($EventData['Address']) { $EventData['Address'] } elseif ($EventData['ClientAddress']) { $EventData['ClientAddress'] } else { $EventData['SourceNetworkAddress'] }
+        $RDPData += [PSCustomObject]@{
+            TimeCreated = $E.TimeCreated
+            Type = "Inbound"
+            User = $EventData['User']
+            SourceIP = $Address
+            Destination = "Local System"
+            Source = "Event $($E.Id)"
+        }
+    }
+
+    # OUTBOUND RDP (Event Logs)
+    $OutboundEvents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TerminalServices-RDPClient/Operational'; Id=1024} -MaxEvents 50 -ErrorAction SilentlyContinue
+    foreach ($E in $OutboundEvents) {
+        $xml = [xml]$E.ToXml()
+        $EventData = @{}
+        if ($xml.Event.EventData.Data) {
+            foreach ($node in $xml.Event.EventData.Data) {
+                $EventData[$node.Name] = $node.'#text'
+            }
+        } elseif ($xml.Event.UserData.EventXML) {
+            foreach ($node in $xml.Event.UserData.EventXML.ChildNodes) {
+                $EventData[$node.Name] = $node.InnerText
+            }
+        }
+        $Value = if ($EventData['Value']) { $EventData['Value'] } else { "Unknown" }
+        
+        $Username = "Unknown"
+        if ($E.UserId) {
+            try { $Username = $E.UserId.Translate([System.Security.Principal.NTAccount]).Value } catch { }
+        }
+        
+        $RDPData += [PSCustomObject]@{
+            TimeCreated = $E.TimeCreated
+            Type = "Outbound"
+            User = $Username
+            SourceIP = "Local System"
+            Destination = $Value
+            Source = "Event $($E.Id)"
+        }
+    }
+
+    # OUTBOUND RDP (Registry HKU)
+    $HKUPaths = Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'S-1-5-21-[\d\-]+$' }
+    foreach ($User in $HKUPaths) {
+        $ServersPath = "$($User.PSPath)\Software\Microsoft\Terminal Server Client\Servers"
+        if (Test-Path $ServersPath) {
+            $Servers = Get-ChildItem -Path $ServersPath -ErrorAction SilentlyContinue
+            foreach ($Server in $Servers) {
+                $Username = (Get-ItemProperty -Path $Server.PSPath -Name UsernameHint -ErrorAction SilentlyContinue).UsernameHint
+                $RDPData += [PSCustomObject]@{
+                    TimeCreated = ""
+                    Type = "Outbound"
+                    User = $Username
+                    SourceIP = "Local System"
+                    Destination = $Server.PSChildName
+                    Source = "Registry (Terminal Server Client)"
+                }
+            }
+        }
+    }
+
+    $Results.RDPConnections = $RDPData
+} catch { Write-Warning "Failed to collect RDP Connections: $_" }
 
 return [PSCustomObject]$Results
