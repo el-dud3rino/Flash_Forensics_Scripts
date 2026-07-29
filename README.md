@@ -84,6 +84,12 @@ Use the `-OS Linux` flag and provide the SSH username. If you aren't using SSH k
 ```
 *(Note: Because of the security architecture of the native Windows SSH client, you must run this interactively in your console if a password is required. For bulk collections, SSH keys are highly recommended to prevent constant password prompting.)*
 
+### 4. Build Dashboard from Existing Files
+If you have a folder full of `*-DFIR_Data.json` files collected previously (or provided by another analyst), you can instantly compile them into a unified dashboard without re-running any data collection against remote endpoints.
+```powershell
+.\Invoke-DFIRCollection.ps1 -BuildDashboardOnly
+```
+
 ## Viewing the Results
 
 Every time you run a collection, the data is intelligently appended into your dashboard without overwriting previous hosts. Collections on the same host append a new timestamped dataset.

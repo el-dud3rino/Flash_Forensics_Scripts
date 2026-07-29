@@ -127,7 +127,7 @@ try {
 
 try {
     # 5. Local Users and Groups
-    $Users = Get-LocalUser -ErrorAction SilentlyContinue | Select-Object Name, Enabled, Description, LastLogon
+    $Users = Get-LocalUser -ErrorAction SilentlyContinue | Select-Object Name, Enabled, Description, @{Name="LastLogon"; Expression={if ($_.LastLogon) { $_.LastLogon.ToString("yyyy-MM-ddTHH:mm:ssZ") } else { "" }}}
     $Results.LocalUsers = $Users
 } catch {
     Write-Warning "Failed to collect Local Users: $_"

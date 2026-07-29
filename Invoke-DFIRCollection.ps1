@@ -36,6 +36,9 @@ param (
     [switch]$PromptCredential,
 
     [Parameter(Mandatory=$false)]
+    [switch]$BuildDashboardOnly,
+
+    [Parameter(Mandatory=$false)]
     [int[]]$AdditionalEventCodes = @()
 )
 
@@ -67,6 +70,23 @@ if ($ComputerCsvPath) {
 }
 
 $Results = @()
+
+if ($BuildDashboardOnly) {
+    Write-Output "BuildDashboardOnly switch provided. Skipping remote data collection."
+    Write-Output "Scanning $OutputDirectory for existing DFIR_Data.json files..."
+    $ExistingJsonFiles = Get-ChildItem -Path $OutputDirectory -Filter "*-DFIR_Data.json" -Recurse -ErrorAction SilentlyContinue
+    foreach ($file in $ExistingJsonFiles) {
+        try {
+            $Parsed = Get-Content $file.FullName -Raw | ConvertFrom-Json
+            if ($Parsed) {
+                $Results += $Parsed
+            }
+        } catch {
+            Write-Warning "Failed to parse $($file.FullName): $_"
+        }
+    }
+    Write-Output "Loaded $(($Results).Count) existing records from disk."
+} else {
 
 if ($OS -eq "Windows") {
     $PayloadScript = Join-Path -Path $PSScriptRoot -ChildPath "Get-DFIRSystemData.ps1"
@@ -100,6 +120,7 @@ if ($OS -eq "Windows") {
             FilePath = $PayloadScript
             ArgumentList = (, $AdditionalEventCodes)
             ErrorAction = 'SilentlyContinue'
+            ErrorVariable = 'InvokeErrors'
         }
         if ($Credential) {
             $InvokeParams.Credential = $Credential
@@ -107,8 +128,22 @@ if ($OS -eq "Windows") {
 
         Write-Output "Starting DFIR collection on $(($RemoteComputers).Count) remote systems..."
         $RemoteResults = Invoke-Command @InvokeParams
+        
+        $SuccessfulComps = @()
         if ($RemoteResults) {
             $Results += $RemoteResults
+            $SuccessfulComps = $RemoteResults | Select-Object -ExpandProperty PSComputerName -Unique
+        }
+        
+        $FailedComps = $RemoteComputers | Where-Object { $_ -notin $SuccessfulComps }
+        if ($FailedComps.Count -gt 0) {
+            Write-Warning "Collection failed on the following remote systems: $($FailedComps -join ', ')"
+            if ($InvokeErrors) {
+                Write-Warning "Connection Error Details:"
+                foreach ($err in $InvokeErrors) {
+                    Write-Warning " - $($err.TargetObject): $($err.Exception.Message)"
+                }
+            }
         }
     }
 } elseif ($OS -eq "Linux") {
@@ -128,8 +163,13 @@ if ($OS -eq "Windows") {
         Write-Output "Starting Linux DFIR collection on $Comp via SSH..."
         $JsonOutput = Get-Content $PayloadScript -Raw | ssh.exe -o StrictHostKeyChecking=no -l $SSHUsername $Comp "python3 -"
         
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "SSH connection to $Comp failed (Exit Code: $LASTEXITCODE). Ensure SSH is running, credentials/keys are valid, and Python3 is installed."
+            continue
+        }
+        
         if ([string]::IsNullOrWhiteSpace($JsonOutput)) {
-            Write-Warning "No output from $Comp. Skipping..."
+            Write-Warning "No output from $Comp. Script execution may have failed."
             continue
         }
         try {
@@ -191,6 +231,7 @@ foreach ($Result in $Results) {
     if ($Result.EventLogs) {
         $Result.EventLogs | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-EventLogs.csv") -NoTypeInformation
     }
+}
 }
 
 Write-Output "Generating HTML Dashboard..."
@@ -735,6 +776,39 @@ $HtmlContent = @'
         window.isCompareMode = false;
         window.selectedHosts = new Set();
         window.hostOSMap = {};
+        window.compareGroupKeys = {};
+
+        function getDefaultCompareKeys(tabName) {
+            switch(tabName) {
+                case 'Processes': return ['Name', 'Path'];
+                case 'Services': return ['Name', 'DisplayName', 'StartMode'];
+                case 'ScheduledTasks': return ['TaskName', 'State'];
+                case 'NetworkConnections': return ['ProcessName', 'Protocol', 'RemoteAddress', 'RemotePort'];
+                case 'Users': return ['Name', 'Enabled'];
+                case 'SystemPersistence': return ['Key', 'ValueName', 'Source'];
+                case 'StartupFiles': return ['Executable', 'Signer', 'Source'];
+                case 'ExecutionEvidence': return ['Executable', 'Source'];
+                case 'InstalledSoftware': return ['DisplayName', 'Publisher'];
+                case 'FirewallRules': return ['DisplayName', 'Direction', 'Action', 'Profile'];
+                case 'RDPConnections': return ['Type', 'User', 'SourceIP', 'Destination'];
+                case 'EventLogs': return ['EventId', 'Provider', 'Details'];
+                default: return []; // Empty means hash all keys (except _System, etc)
+            }
+        }
+        
+        function toggleCompareKey(tabName, keyName) {
+            if (!window.compareGroupKeys[tabName]) {
+                window.compareGroupKeys[tabName] = getDefaultCompareKeys(tabName);
+            }
+            const keys = window.compareGroupKeys[tabName];
+            const idx = keys.indexOf(keyName);
+            if (idx >= 0) {
+                keys.splice(idx, 1);
+            } else {
+                keys.push(keyName);
+            }
+            renderTable(tabName);
+        }
 
         if (typeof dfirData === 'undefined') {
             document.getElementById('tableContainer').innerHTML = '<div class="empty-state" style="color:var(--danger)">Error: data.js could not be loaded or is empty. Ensure Invoke-DFIRCollection.ps1 finished successfully.</div>';
@@ -804,6 +878,29 @@ $HtmlContent = @'
 
         function initApp() {
             let systems = Array.isArray(dfirData) ? dfirData : [dfirData];
+            
+            function cleanDates(obj) {
+                if (!obj) return;
+                if (Array.isArray(obj)) {
+                    obj.forEach(cleanDates);
+                } else if (typeof obj === 'object') {
+                    for (let key in obj) {
+                        if (typeof obj[key] === 'string' && (obj[key].startsWith('/Date(') || obj[key].startsWith('Date('))) {
+                            try {
+                                const match = obj[key].match(/\d+/);
+                                if (match) {
+                                    const d = new Date(parseInt(match[0]));
+                                    if (!isNaN(d)) obj[key] = d.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+                                }
+                            } catch(e) {}
+                        } else if (typeof obj[key] === 'object') {
+                            cleanDates(obj[key]);
+                        }
+                    }
+                }
+            }
+            cleanDates(systems);
+            
             
             groupedSystems = {};
             systems.forEach((sys, idx) => {
@@ -1284,15 +1381,20 @@ $HtmlContent = @'
             return html;
         }
 
-        const noisyKeys = ['Id', 'ProcessId', 'ParentProcessId', 'SessionId', 'CPU', 'WorkingSetSize', 'StartTime', 'TimeCreated', 'NextRunTime', 'LastRunTime', 'InstallDate', 'OwningProcess', 'RecordId', 'SessionID', 'RunTime'];
-
-        function hashArtifact(obj) {
+        function hashArtifact(obj, tabName) {
             let clean = {};
-            Object.keys(obj).sort().forEach(k => {
-                if (!noisyKeys.includes(k) && k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On') {
-                    clean[k] = obj[k];
-                }
-            });
+            let keys = window.compareGroupKeys[tabName] || [];
+            if (keys.length === 0) {
+                Object.keys(obj).sort().forEach(k => {
+                    if (k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On') {
+                        clean[k] = obj[k];
+                    }
+                });
+            } else {
+                keys.forEach(k => {
+                    clean[k] = obj[k] !== undefined ? obj[k] : null;
+                });
+            }
             return JSON.stringify(clean);
         }
 
@@ -1338,10 +1440,35 @@ $HtmlContent = @'
                     container.innerHTML = '<div class="empty-state">No data collected for ' + tabName + ' across selected hosts.</div>';
                     return;
                 }
+                
+                let allKeys = new Set();
+                allItems.forEach(i => {
+                    if(i) Object.keys(i).forEach(k => {
+                        if (k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On') allKeys.add(k);
+                    });
+                });
+                allKeys = Array.from(allKeys).sort();
+                
+                if (!window.compareGroupKeys[tabName]) {
+                    window.compareGroupKeys[tabName] = getDefaultCompareKeys(tabName);
+                }
+                const activeKeys = window.compareGroupKeys[tabName];
+                
+                html += `<div style="margin-bottom: 15px; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 6px; border: 1px solid var(--glass-border);">
+                    <div style="font-weight: bold; color: var(--text-main); margin-bottom: 10px; font-size: 0.95rem;">Stack Items By (Uniqueness Keys):</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">`;
+                allKeys.forEach(k => {
+                    const isActive = activeKeys.includes(k);
+                    const bg = isActive ? 'var(--accent)' : 'var(--bg-lighter)';
+                    const fg = isActive ? 'white' : 'var(--text-muted)';
+                    const border = isActive ? 'var(--accent)' : 'var(--glass-border)';
+                    html += `<button onclick="toggleCompareKey('${tabName}', '${escapeHtml(k)}')" style="padding: 4px 10px; border-radius: 12px; border: 1px solid ${border}; background: ${bg}; color: ${fg}; cursor: pointer; font-size: 0.8rem; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${escapeHtml(k)}</button>`;
+                });
+                html += `</div></div>`;
 
                 const stacked = {};
                 allItems.forEach(item => {
-                    const hash = hashArtifact(item);
+                    const hash = hashArtifact(item, tabName);
                     if (!stacked[hash]) {
                         stacked[hash] = {
                             Count: 0,
