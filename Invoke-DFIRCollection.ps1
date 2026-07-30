@@ -1297,8 +1297,15 @@ $HtmlContent = @'
             keys = Array.from(keys);
             
             // Limit Chronological EventLogs view to generic columns
-            if (currentTab === 'EventLogs' && !window.eventLogGroupMode && titleHtml === '') {
-                keys = ['EventTime', 'EventId', 'Provider', 'Details'];
+            if (currentTab === 'EventLogs') {
+                if (!window.eventLogGroupMode && titleHtml === '') {
+                    keys = ['EventTime', 'EventId', 'Details'];
+                } else {
+                    keys = keys.filter(k => k !== 'EventName' && k !== 'Provider');
+                }
+            }
+            if (currentTab === 'FirewallRules') {
+                keys = keys.filter(k => k !== 'Program' && k !== 'Profile');
             }
             
             let html = titleHtml + '<table><thead><tr>';
@@ -1334,7 +1341,7 @@ $HtmlContent = @'
             window.renderedItems = window.renderedItems || {};
             arr.forEach(item => {
                 const trId = 'tr-' + Math.random().toString(36).substr(2, 9);
-                window.renderedItems[trId] = { system: selectedHostname, category: currentTab, data: item };
+                window.renderedItems[trId] = { system: selectedHostname, category: currentTab, data: item, timestamp: (typeof currentComputer !== 'undefined' && currentComputer ? (currentComputer.Timestamp || '') : '') };
                 html += `<tr id="${trId}-main">`;
                 
                 if (currentTab !== 'FlaggedItems') {
@@ -1518,7 +1525,12 @@ $HtmlContent = @'
                         });
                         Object.keys(groupedBySource).forEach((src, idx) => {
                             const groupId = 'group-' + tabName + '-' + idx;
-                            const headerText = groupProp === 'EventId' ? 'Event ID: ' + src : src;
+                            let headerText = src;
+                            if (groupProp === 'EventId') {
+                                const fItem = groupedBySource[src][0];
+                                const eName = (fItem && fItem.EventName && fItem.EventName !== 'Unknown') ? ': ' + fItem.EventName : '';
+                                headerText = 'Event ID ' + src + eName;
+                            }
                             html += `
                                 <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
                                      onclick="const e = document.getElementById('${groupId}'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
@@ -1595,7 +1607,12 @@ $HtmlContent = @'
                         
                         Object.keys(groupedBySource).forEach((src, idx) => {
                             const groupId = 'group-' + tabName + '-' + idx;
-                            const headerText = groupProp === 'EventId' ? 'Event ID: ' + src : src;
+                            let headerText = src;
+                            if (groupProp === 'EventId') {
+                                const fItem = groupedBySource[src][0];
+                                const eName = (fItem && fItem.EventName && fItem.EventName !== 'Unknown') ? ': ' + fItem.EventName : '';
+                                headerText = 'Event ID ' + src + eName;
+                            }
                             html += `
                                 <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
                                      onclick="const e = document.getElementById('${groupId}'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
@@ -1881,6 +1898,10 @@ $HtmlContent = @'
                 });
                 keys = Array.from(keys);
                 
+                if (resultGroup.category === 'FirewallRules') {
+                    keys = keys.filter(k => k !== 'Program' && k !== 'Profile');
+                }
+                
                 keys.forEach(k => {
                     tableHtml += `<th>${escapeHtml(k)}</th>`;
                 });
@@ -1967,7 +1988,8 @@ $HtmlContent = @'
             let flags = getFlaggedItems();
             
             if (!window.showAllFlaggedHosts && selectedHostname) {
-                flags = flags.filter(f => f.system === selectedHostname);
+                  const curTs = (typeof currentComputer !== 'undefined' && currentComputer ? currentComputer.Timestamp || '' : '');
+                  flags = flags.filter(f => f.system === selectedHostname && (!f.timestamp || f.timestamp === curTs));
             }
             
             const toggleHtml = `
@@ -1975,7 +1997,7 @@ $HtmlContent = @'
                 <button onclick="exportFlaggedItems()" style="background:var(--accent); color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; font-weight:bold; transition: background 0.2s;">&#128190; Export Flagged Items to CSV</button>
                 <label style="color:var(--text-main); font-weight:bold; cursor:pointer; display:flex; align-items:center;">
                     <input type="checkbox" style="margin-right:6px;" ${window.showAllFlaggedHosts ? 'checked' : ''} onchange="toggleFlaggedHosts(this.checked)"> 
-                    Include all hosts in dataset
+                    Include all hosts and historical datasets
                 </label>
             </div>`;
 
@@ -2012,7 +2034,8 @@ $HtmlContent = @'
         function exportFlaggedItems() {
             let flags = getFlaggedItems();
             if (!window.showAllFlaggedHosts && selectedHostname) {
-                flags = flags.filter(f => f.system === selectedHostname);
+                  const curTs = (typeof currentComputer !== 'undefined' && currentComputer ? currentComputer.Timestamp || '' : '');
+                  flags = flags.filter(f => f.system === selectedHostname && (!f.timestamp || f.timestamp === curTs));
             }
             if (flags.length === 0) return;
             

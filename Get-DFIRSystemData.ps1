@@ -319,6 +319,21 @@ try {
 
 try {
     # 8. Event Logs (High Value: Logons, Process Creation, Services, PowerShell, Tasks, Users)
+    $EventNames = @{
+        4103 = 'PowerShell Module Logging'
+        4104 = 'PowerShell Script Block Logging'
+        4624 = 'Successful Logon'
+        4625 = 'Failed Logon'
+        4672 = 'Special Privileges Assigned'
+        4688 = 'Process Creation'
+        4697 = 'Service Installation'
+        7045 = 'Service Installation'
+        4698 = 'Scheduled Task Created'
+        4702 = 'Scheduled Task Updated'
+        4720 = 'User Account Created'
+        4722 = 'User Account Enabled'
+        4738 = 'User Account Modified'
+    }
     $TargetIds = @(4103, 4104, 4624, 4625, 4672, 4688, 4697, 4698, 4702, 4720, 4722, 4738, 7045)
     if ($AdditionalEventCodes) {
         $TargetIds += $AdditionalEventCodes
@@ -329,6 +344,7 @@ try {
         $BaseProps = [ordered]@{
             EventTime = $E.TimeCreated
             EventId   = $E.Id
+            EventName = if ($EventNames.ContainsKey([int]$E.Id)) { $EventNames[[int]$E.Id] } else { 'Unknown' }
             Provider  = $E.ProviderName
         }
 
@@ -539,8 +555,11 @@ try {
             if ($Line -match "^([^:]+):\s+(.*)") {
                 $Key = $matches[1].Trim() -replace ' ', ''
                 $Val = $matches[2].Trim()
+                
+                $Exclude = @("EdgeTraversal", "InterfaceTypes", "Security", "RuleSource", "Service", "Description", "Grouping", "Group")
+                if ($Exclude -contains $Key -or $Exclude -contains $matches[1].Trim()) { continue }
+
                 if ($Key -eq "Profiles") { $Key = "Profile" }
-                if ($Key -eq "Grouping") { $Key = "Group" }
                 $CurrentRule[$Key] = $Val
             }
         }

@@ -1,0 +1,9 @@
+﻿feat: enhance dashboard ui, event grouping, and triage flags
+
+- Bound Triage Flagging strictly to the underlying dataset timestamp to prevent historical flag bleed-over on newer views
+- Renamed Flagged Items toggle to "Include all hosts and historical datasets" for clarity
+- Mapped descriptive names to core Windows Event Log IDs natively during collection
+- Injected EventName dynamically into dashboard section headers when grouping by EventID
+- Stripped noisy columns (Program, Profile) from Firewall table views to improve readability
+- Removed redundant Provider and EventName columns from Event Logs views
+- Updated README.md to reflect the new flagging timeline persistence and event grouping features

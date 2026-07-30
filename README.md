@@ -7,7 +7,7 @@ A powerful, agentless Digital Forensics and Incident Response (DFIR) collection 
 - **Cross-Platform & Agentless**: Collects from Windows (via WinRM `Invoke-Command` or locally) and Linux (via native `ssh.exe` pipe), requiring zero agent installations.
 - **Fileless Linux Execution**: The Python payload (`Get-LinuxDFIRSystemData.py`) is piped directly into the remote Linux system's memory over SSH. No scripts are dropped to the disk of the target!
 - **Interactive HTML Dashboard**: Automatically generates a dark-themed, premium HTML dashboard (`index.html`) that works completely offline with zero web server requirements. Features a collapsible sidebar to maximize screen real-estate.
-- **Triage Flagging (New!)**: Easily bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are aggregated into an executive summary view. You can view flags from all hosts simultaneously, with clear hostname attribution, and instantly export them to a CSV for your final incident report.
+- **Triage Flagging (New!)**: Easily bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are strictly bound to the timeline of the dataset they were captured in. You can toggle "Include all hosts and historical datasets" to view every flag simultaneously, and instantly export them to a CSV for your final incident report.
 - **Compare Mode / Frequency Analysis (New!)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems (e.g., "Select All Windows" or arbitrary checkboxes). The dashboard intelligently filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, bubbling highly unique outliers (like a rogue service seen on only 1 out of 50 machines) directly to the top.
 - **Temporal Datasets**: Each run creates a timestamped dataset folder (e.g., `Host-YYYY-MM-DD_HHMMZ`), allowing you to review and compare historical captures of the same system.
 - **Global Search**: Search instantly across all categories on a specific system or sweep across all collected systems globally (both latest datasets and all-time history).
@@ -121,6 +121,7 @@ Several tabs in the dashboard intelligently merge data from multiple sources. Fo
 - **Execution Evidence** groups artifacts by *Source* (e.g., Windows Prefetch, PowerShell History, Linux Bash History). 
 - **Users** groups accounts into *Local Users* and *Privileged Access*.
 - **System Persistence** groups by artifacts like *Registry Run Keys* or *BITS Transfers*.
+- **Event Logs** groups natively by *Event ID* and dynamically injects descriptive names (e.g., Successful Logon, Process Creation) directly into the section headers.
 
 Each data source is presented in its own distinct, collapsible section. You can simply click on the section header to cleanly expand or collapse that specific dataset.
 
