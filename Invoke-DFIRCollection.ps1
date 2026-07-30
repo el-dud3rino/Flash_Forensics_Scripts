@@ -239,7 +239,7 @@ foreach ($Result in $Results) {
 Write-Output "Generating HTML Dashboard..."
 
 # Export all results to data.js for HTML dashboard
-$DataJsPath = Join-Path -Path $OutputDirectory -ChildPath "data.js"
+$DataJsPath = Join-Path -Path $PSScriptRoot -ChildPath "data.js"
 $ExistingData = New-Object System.Collections.ArrayList
 
 if (Test-Path $DataJsPath) {
