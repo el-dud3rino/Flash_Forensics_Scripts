@@ -81,6 +81,7 @@ This playbook provides a checklist of commands and locations used to manually ga
 - **Goal**: Identify common registry-based persistence mechanisms.
 - **Description**: Checks standard Run, RunOnce, BootExecute keys and enumerates BITS transfer jobs.
 - **External Tools**: [Sysinternals Autoruns](https://learn.microsoft.com/en-us/sysinternals/downloads/autoruns) is the gold standard for comprehensively identifying persistence mechanisms across the entire OS (Registry, Services, Scheduled Tasks, WMI, etc).
+  - *Example*: `autorunsc.exe -a * -c -h -m -v > autoruns_output.csv` (Exports all locations to CSV with VirusTotal hashes)
 - **Commands**:
   - `Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"`
   - `Get-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"`
@@ -99,7 +100,9 @@ This playbook provides a checklist of commands and locations used to manually ga
 - **Description**: Collects Windows Prefetch files and the PowerShell command history file.
 - **External Tools**: 
   - [Eric Zimmerman's PECmd](https://ericzimmerman.github.io/#!index.md) to deeply parse and extract execution timestamps from `.pf` Prefetch files.
+    - *Example*: `PECmd.exe -d "C:\Windows\Prefetch" --csv "C:\temp" --csvf prefetch_output.csv`
   - [Eric Zimmerman's JLECmd](https://ericzimmerman.github.io/#!index.md) to parse Jump Lists for file access evidence.
+    - *Example*: `JLECmd.exe -d "C:\Users\<User>\AppData\Roaming\Microsoft\Windows\Recent" --csv "C:\temp" --csvf jumplists_output.csv`
 - **Commands**:
   - `Get-ChildItem -Path "C:\Windows\Prefetch\*.pf" -File`
   - `Get-Content (Get-PSReadLineOption).HistorySavePath`
@@ -130,6 +133,7 @@ This playbook provides a checklist of commands and locations used to manually ga
 - **Goal**: Extract key security and operational event logs.
 - **Description**: Queries critical Event IDs (Logons, Process Creation, Services, Tasks) from the System, Security, and Microsoft-Windows-TerminalServices logs.
 - **External Tools**: [Eric Zimmerman's EvtxECmd](https://ericzimmerman.github.io/#!index.md) to bulk-parse raw `.evtx` files and output normalized CSV timelines of critical OS events.
+  - *Example*: `EvtxECmd.exe -d "C:\Windows\System32\winevt\Logs" --csv "C:\temp" --csvf eventlogs_timeline.csv`
 - **Commands**:
   - `Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624, 4625, 4688}`
   - `Get-WinEvent -FilterHashtable @{LogName='System'; Id=7045}`
