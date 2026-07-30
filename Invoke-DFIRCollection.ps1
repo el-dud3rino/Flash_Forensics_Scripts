@@ -953,6 +953,9 @@ $HtmlContent = @'
                     window.diffTargetTs = runs[0].Timestamp || '';
                     window.diffBaseTs = runs[1].Timestamp || '';
                 }
+            } else {
+                const runs = groupedSystems[selectedHostname];
+                currentComputer = runs ? runs[0] : null;
             }
             renderTimestampBadge();
             switchTab(currentTab);
@@ -1045,8 +1048,21 @@ $HtmlContent = @'
             renderComputerList();
             
             const runs = groupedSystems[name];
+            
+            // If we are in diff mode but this new host doesn't have enough datasets, force exit
+            if (window.isDiffMode && runs && runs.length <= 1) {
+                window.isDiffMode = false;
+            }
+
             if (!window.isDiffMode) {
                 selectDatasetByTimestamp(runs[0].Timestamp || '');
+            } else {
+                if (runs && runs.length > 1) {
+                    window.diffTargetTs = runs[0].Timestamp || '';
+                    window.diffBaseTs = runs[1].Timestamp || '';
+                }
+                currentComputer = runs[0];
+                switchTab(currentTab);
             }
             renderTimestampBadge();
         }
