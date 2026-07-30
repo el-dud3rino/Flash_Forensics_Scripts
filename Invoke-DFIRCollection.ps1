@@ -1404,7 +1404,20 @@ $HtmlContent = @'
                 html += '<th style="width:50px; text-align:center;">Flag</th>';
             }
             if (window.isDiffMode) {
-                html += '<th style="width:100px; text-align:center;">Diff</th>';
+                let diffFilterVal = columnFilters['_DiffStatus'] || '';
+                let sortIndicator = "";
+                if (currentSortColumn === '_DiffStatus') {
+                    sortIndicator = currentSortDirection === 'asc' ? " &#9650;" : " &#9660;";
+                }
+                html += `<th style="width:120px; text-align:center; vertical-align:top;">
+                            <div class="sortable-header" onclick="sortTable('_DiffStatus')" style="margin-bottom:5px;">Diff${sortIndicator}</div>
+                            <select onchange="setColumnFilter('_DiffStatus', this.value);" style="width:100%; padding:3px; border-radius:4px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border);">
+                                <option value="" ${diffFilterVal === '' ? 'selected' : ''}>All</option>
+                                <option value="Added" ${diffFilterVal === 'Added' ? 'selected' : ''}>+ Added</option>
+                                <option value="Removed" ${diffFilterVal === 'Removed' ? 'selected' : ''}>- Removed</option>
+                                <option value="Unchanged" ${diffFilterVal === 'Unchanged' ? 'selected' : ''}>Unchanged</option>
+                            </select>
+                         </th>`;
             }
             keys.forEach(k => {
                 let sortIndicator = "";
