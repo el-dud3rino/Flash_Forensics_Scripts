@@ -785,6 +785,22 @@ $HtmlContent = @'
         window.isDiffMode = false;
         window.diffBaseTs = null;
         window.diffTargetTs = null;
+        window.navHighlightHash = null;
+
+        function navigateToItem(tabName, itemHash) {
+            window.navHighlightHash = itemHash;
+            switchTab(tabName);
+            setTimeout(() => {
+                const tr = document.getElementById('highlight-row');
+                if (tr) {
+                    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Give it a brief background flash effect
+                    tr.style.transition = 'background 1s';
+                    tr.style.background = 'rgba(74, 222, 128, 0.2)';
+                    setTimeout(() => { tr.style.background = ''; }, 2000);
+                }
+            }, 150);
+        }
 
         function getDefaultCompareKeys(tabName) {
             switch(tabName) {
@@ -1474,21 +1490,28 @@ $HtmlContent = @'
             } else {
             window.renderedItems = window.renderedItems || {};
             arr.forEach(item => {
-                let rowStyle = '';
-                if (window.isDiffMode && item && item._DiffStatus) {
-                    if (item._DiffStatus === 'Added') rowStyle = 'background: rgba(40,167,69,0.15);';
-                    if (item._DiffStatus === 'Removed') rowStyle = 'background: rgba(220,53,69,0.15); text-decoration: line-through;';
-                }
                 const trId = 'tr-' + Math.random().toString(36).substr(2, 9);
                 window.renderedItems[trId] = { system: selectedHostname, category: currentTab, data: item, timestamp: (typeof currentComputer !== 'undefined' && currentComputer ? (currentComputer.Timestamp || '') : '') };
                 
-                const isFlagged = item && window.flaggedHashes && window.flaggedHashes.has(hashArtifact(item, currentTab));
-                html += `<tr id="${trId}" style="${rowStyle}">`;
+                const itemHash = hashArtifact(item, currentTab);
+                const isHighlighted = (window.navHighlightHash && window.navHighlightHash === itemHash);
+                const isFlagged = item && window.flaggedHashes && window.flaggedHashes.has(itemHash);
+                
+                let rowStyle = '';
+                if (isHighlighted) {
+                    rowStyle = 'background: rgba(74, 222, 128, 0.2);';
+                } else if (window.isDiffMode && item && item._DiffStatus === 'Added') {
+                    rowStyle = 'background: rgba(40, 167, 69, 0.1); border-left: 3px solid #28a745;';
+                } else if (window.isDiffMode && item && item._DiffStatus === 'Removed') {
+                    rowStyle = 'background: rgba(220, 53, 69, 0.1); border-left: 3px solid #dc3545; opacity: 0.7;';
+                }
+                
+                html += `<tr id="${isHighlighted ? 'highlight-row' : trId}" style="${rowStyle}">`;
                 if (currentTab !== 'FlaggedItems') {
                     if (isFlagged) {
-                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', '${escapeHtml(hashArtifact(item, currentTab))}')"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;">&#128681;</span></td>`;
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${isHighlighted ? 'highlight-row' : trId}', '${escapeHtml(itemHash)}')"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;">&#128681;</span></td>`;
                     } else {
-                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', '${escapeHtml(hashArtifact(item, currentTab))}')"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">&#9873;</span></td>`;
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${isHighlighted ? 'highlight-row' : trId}', '${escapeHtml(itemHash)}')"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">&#9873;</span></td>`;
                     }
                 }
                 
@@ -1513,28 +1536,37 @@ $HtmlContent = @'
                             }
                         } catch(e) {}
                     }
-                    if ((currentTab === 'EventLogs' || currentTab === 'FirewallRules') && kIdx === 0) {
+                    if (kIdx === 0) {
                         html += `<td>
                                    <span style="cursor:pointer; color:var(--accent); font-weight:bold; margin-right:10px; font-family:monospace;" 
-                                         onclick="const e=document.getElementById('${trId}-exp'); e.style.display=e.style.display==='none'?'table-row':'none'; this.innerText=e.style.display==='none'?'[+]':'[-]';">[+]</span>
-                                   <div class="td-content" style="display:inline-block; vertical-align:top;" onclick="showCellModal(this.parentElement)">${escapeHtml(val)}</div>
+                                         onclick="const e=document.getElementById('${trId}-exp'); e.style.display=e.style.display==='none'?'table-row':'none'; this.innerText=e.style.display==='none'?'[+]':'[-]';">${isHighlighted ? '[-]' : '[+]'}</span>
+                                   <div class="td-content" style="display:inline-block; vertical-align:top;">${escapeHtml(val)}</div>
                                  </td>`;
                     } else {
-                        html += `<td onclick="showCellModal(this)"><div class="td-content">${escapeHtml(val)}</div></td>`;
+                        html += `<td><div class="td-content">${escapeHtml(val)}</div></td>`;
                     }
                 });
                 html += '</tr>';
-                if (currentTab === 'EventLogs' || currentTab === 'FirewallRules') {
-                    const fullData = item ? Object.keys(item).map(k => `<strong style="color:var(--accent-hover);">${escapeHtml(k)}:</strong> ${escapeHtml(item[k])}`).join('<br>') : '';
-                    let colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
-                    if (window.isDiffMode) colSpanCount += 1;
-                    html += `<tr id="${trId}-exp" style="display:none; background: rgba(0,0,0,0.2);">
-                               <td colspan="${colSpanCount}" style="padding:15px; border-left: 3px solid var(--accent);">
-                                 <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; color:var(--text);">${fullData}</div>
-                               </td>
-                             </tr>`;
-                }
+                
+                let colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
+                if (window.isDiffMode) colSpanCount += 1;
+                html += `<tr id="${trId}-exp" style="display:${isHighlighted ? 'table-row' : 'none'}; background: rgba(0,0,0,0.2);">
+                           <td colspan="${colSpanCount}" style="padding:15px; border-left: 3px solid var(--accent);">
+                             <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; color:var(--text);">`;
+                
+                keys.forEach(k => {
+                    let v = item ? item[k] : "";
+                    if (v && typeof v === 'object' && v.value_enum !== undefined && v.Value !== undefined) v = v.Value;
+                    html += `<strong style="color:var(--accent-hover);">${escapeHtml(k)}:</strong> ${escapeHtml(v)}<br>`;
+                });
+                
+                html += `    </div>
+                           </td>
+                         </tr>`;
             });
+            
+            // clear highlight after rendering
+            window.navHighlightHash = null;
             }
             html += '</tbody></table>';
             return html;
@@ -1959,7 +1991,8 @@ $HtmlContent = @'
                         events.push({
                             time: ts,
                             category: cat,
-                            summary: summary
+                            summary: summary,
+                            hash: hashArtifact(item, cat)
                         });
                     }
                 });
@@ -1981,10 +2014,10 @@ $HtmlContent = @'
                 if (ev.category === 'ScheduledTasks') catColor = '#34d399';
                 if (ev.category === 'ExecutionEvidence') catColor = '#c084fc';
                 
-                html += `<tr>
-                    <td style="white-space: nowrap;" onclick="showCellModal(this)">${ev.time.toLocaleString()}</td>
-                    <td onclick="showCellModal(this)"><span style="color: ${catColor}; font-weight: bold;">${ev.category}</span></td>
-                    <td onclick="showCellModal(this)"><div class="td-content">${escapeHtml(ev.summary)}</div></td>
+                html += `<tr style="cursor:pointer;" onclick="navigateToItem('${ev.category}', '${escapeHtml(ev.hash)}')">
+                    <td style="white-space: nowrap;">${ev.time.toLocaleString()}</td>
+                    <td><span style="color: ${catColor}; font-weight: bold;">${ev.category}</span></td>
+                    <td><div class="td-content">${escapeHtml(ev.summary)}</div></td>
                 </tr>`;
             });
             html += '</tbody></table>';
@@ -2129,7 +2162,7 @@ $HtmlContent = @'
                 arr.forEach(item => {
                     tableHtml += '<tr>';
                     keys.forEach(k => {
-                        tableHtml += `<td onclick="showCellModal(this)"><div class="td-content">${escapeHtml(item ? item[k] : null)}</div></td>`;
+                        tableHtml += `<td><div class="td-content">${escapeHtml(item ? item[k] : null)}</div></td>`;
                     });
                     tableHtml += '</tr>';
                 });
