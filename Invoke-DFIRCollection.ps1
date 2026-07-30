@@ -1509,9 +1509,9 @@ $HtmlContent = @'
                 html += `<tr id="${isHighlighted ? 'highlight-row' : trId}" style="${rowStyle}">`;
                 if (currentTab !== 'FlaggedItems') {
                     if (isFlagged) {
-                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${isHighlighted ? 'highlight-row' : trId}', '${escapeHtml(itemHash)}')"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;">&#128681;</span></td>`;
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', event)"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;">&#128681;</span></td>`;
                     } else {
-                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${isHighlighted ? 'highlight-row' : trId}', '${escapeHtml(itemHash)}')"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">&#9873;</span></td>`;
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', event)"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">&#9873;</span></td>`;
                     }
                 }
                 
