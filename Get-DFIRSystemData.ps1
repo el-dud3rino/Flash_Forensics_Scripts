@@ -478,8 +478,8 @@ try {
                 $PrivAccess += [PSCustomObject]@{
                     Group = $Group
                     Name = $Mem.Name
-                    ObjectClass = $Mem.ObjectClass
-                    PrincipalSource = $Mem.PrincipalSource
+                    ObjectClass = "$($Mem.ObjectClass)"
+                    PrincipalSource = "$($Mem.PrincipalSource)"
                 }
             }
         } catch { }

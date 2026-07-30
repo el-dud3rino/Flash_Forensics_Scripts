@@ -1486,6 +1486,7 @@ $HtmlContent = @'
                 
                 keys.forEach((key, kIdx) => {
                     let val = item ? item[key] : null;
+                    if (val && typeof val === 'object' && val.value_enum !== undefined && val.Value !== undefined) val = val.Value;
                     if (key.includes('Time') || key.includes('Date')) {
                         try {
                             const d = parseCustomDate(val);
@@ -1528,13 +1529,17 @@ $HtmlContent = @'
             let keys = window.compareGroupKeys[tabName] || [];
             if (keys.length === 0) {
                 Object.keys(obj).sort().forEach(k => {
-                    if (k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On') {
-                        clean[k] = obj[k];
+                    if (k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On' && k !== '_DiffStatus') {
+                        let val = obj[k];
+                        if (val && typeof val === 'object' && val.value_enum !== undefined && val.Value !== undefined) val = val.Value;
+                        clean[k] = val;
                     }
                 });
             } else {
                 keys.forEach(k => {
-                    clean[k] = obj[k] !== undefined ? obj[k] : null;
+                    let val = obj[k] !== undefined ? obj[k] : null;
+                    if (val && typeof val === 'object' && val.value_enum !== undefined && val.Value !== undefined) val = val.Value;
+                    clean[k] = val;
                 });
             }
             return JSON.stringify(clean);
