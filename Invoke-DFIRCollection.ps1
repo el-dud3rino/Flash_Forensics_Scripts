@@ -1986,13 +1986,17 @@ $HtmlContent = @'
                         else if (cat === 'LocalUsers') summary = `User Logon: ${item.Username}`;
                         else if (cat === 'StartupFiles') summary = `Startup File Created: ${item.Path}`;
                         else if (cat === 'ExecutionEvidence') summary = `Executed: ${item.Executable}`;
-                        else if (cat === 'EventLogs') summary = `[${item.EventId}] ${item.Provider}: ${item.Message}`;
+                        else if (cat === 'EventLogs') {
+                            const details = item.Details || item.Message || item.ScriptBlockText || 'No details available';
+                            summary = `[${item.EventId}] ${item.Provider || item.LogName || 'EventLog'}: ${details}`;
+                        }
 
                         events.push({
                             time: ts,
                             category: cat,
                             summary: summary,
-                            hash: hashArtifact(item, cat)
+                            hash: hashArtifact(item, cat),
+                            data: item
                         });
                     }
                 });
@@ -2007,6 +2011,7 @@ $HtmlContent = @'
 
             let html = '<table><thead><tr><th>Timestamp</th><th>Category</th><th>Event Summary</th></tr></thead><tbody>';
             events.forEach(ev => {
+                const trId = 'tl-' + Math.random().toString(36).substr(2, 9);
                 let catColor = '#cbd5e1';
                 if (ev.category === 'Processes') catColor = '#60a5fa';
                 if (ev.category === 'EventLogs') catColor = '#f87171';
@@ -2014,11 +2019,32 @@ $HtmlContent = @'
                 if (ev.category === 'ScheduledTasks') catColor = '#34d399';
                 if (ev.category === 'ExecutionEvidence') catColor = '#c084fc';
                 
-                html += `<tr style="cursor:pointer;" data-cat="${escapeHtml(ev.category)}" data-hash="${escapeHtml(ev.hash)}" onclick="navigateToItem(this.getAttribute('data-cat'), this.getAttribute('data-hash'))">
-                    <td style="white-space: nowrap;">${ev.time.toLocaleString()}</td>
-                    <td><span style="color: ${catColor}; font-weight: bold;">${ev.category}</span></td>
-                    <td><div class="td-content">${escapeHtml(ev.summary)}</div></td>
+                html += `<tr style="cursor:pointer;" id="${trId}" data-cat="${escapeHtml(ev.category)}" data-hash="${escapeHtml(ev.hash)}">
+                    <td style="white-space: nowrap;">
+                        <span style="cursor:pointer; color:var(--accent); font-weight:bold; margin-right:10px; font-family:monospace;" 
+                              onclick="const e=document.getElementById('${trId}-exp'); e.style.display=e.style.display==='none'?'table-row':'none'; this.innerText=e.style.display==='none'?'[+]':'[-]'; event.stopPropagation();">[+]</span>
+                        ${ev.time.toLocaleString()}
+                    </td>
+                    <td onclick="navigateToItem(this.parentElement.getAttribute('data-cat'), this.parentElement.getAttribute('data-hash'))"><span style="color: ${catColor}; font-weight: bold;">${ev.category}</span></td>
+                    <td onclick="navigateToItem(this.parentElement.getAttribute('data-cat'), this.parentElement.getAttribute('data-hash'))"><div class="td-content">${escapeHtml(ev.summary)}</div></td>
                 </tr>`;
+                
+                html += `<tr id="${trId}-exp" style="display:none; background: rgba(0,0,0,0.2);">
+                           <td colspan="3" style="padding:15px; border-left: 3px solid var(--accent);">
+                             <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; color:var(--text);">`;
+                
+                if (ev.data) {
+                    Object.keys(ev.data).forEach(k => {
+                        if (k.startsWith('_')) return;
+                        let v = ev.data[k];
+                        if (v && typeof v === 'object' && v.value_enum !== undefined && v.Value !== undefined) v = v.Value;
+                        html += `<strong style="color:var(--accent-hover);">${escapeHtml(k)}:</strong> ${escapeHtml(v)}<br>`;
+                    });
+                }
+                
+                html += `    </div>
+                           </td>
+                         </tr>`;
             });
             html += '</tbody></table>';
             container.innerHTML = html;
