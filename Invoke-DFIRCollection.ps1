@@ -89,8 +89,7 @@ if ($BuildDashboardOnly) {
     }
     Write-Output "Loaded $(($Results).Count) existing records from disk."
 } else {
-
-if ($OS -eq "Windows") {
+    if ($OS -eq "Windows") {
     $PayloadScript = Join-Path -Path $PSScriptRoot -ChildPath "collection-scripts\Get-DFIRSystemData.ps1"
     if (-not (Test-Path $PayloadScript)) {
         Write-Error "Could not find payload script at $PayloadScript. Please ensure Get-DFIRSystemData.ps1 is in the collection-scripts directory."
