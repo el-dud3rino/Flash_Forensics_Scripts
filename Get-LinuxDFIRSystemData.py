@@ -34,7 +34,9 @@ results = {
     "EventLogs": [],
     "SystemInfo": [],
     "ExecutionEvidence": [],
-    "PrivilegedAccess": []
+    "PrivilegedAccess": [],
+    "InstalledSoftware": [],
+    "FirewallRules": []
 }
 
 # 0. System Info
@@ -263,7 +265,8 @@ for provider, paths in log_files.items():
                     "Provider": provider,
                     "Username": username,
                     "Status": status,
-                    "Message": line
+                    "Message": line,
+                    "Details": line
                 })
 
 try:
@@ -320,6 +323,93 @@ try:
                             "Name": mem,
                             "ObjectClass": "User",
                             "PrincipalSource": "LocalGroup"
+                        })
+except:
+    pass
+
+try:
+    # 11. Installed Software
+    dpkg_out = run_cmd("dpkg-query -W -f='${binary:Package}|${Version}|${Maintainer}\n' 2>/dev/null")
+    if dpkg_out:
+        for line in dpkg_out.strip().split('\n'):
+            parts = line.split('|')
+            if len(parts) >= 2:
+                results["InstalledSoftware"].append({
+                    "DisplayName": parts[0],
+                    "DisplayVersion": parts[1],
+                    "Publisher": parts[2] if len(parts) > 2 else "Unknown"
+                })
+    else:
+        rpm_out = run_cmd("rpm -qa --qf '%{NAME}|%{VERSION}|%{VENDOR}\n' 2>/dev/null")
+        if rpm_out:
+            for line in rpm_out.strip().split('\n'):
+                parts = line.split('|')
+                if len(parts) >= 2:
+                    results["InstalledSoftware"].append({
+                        "DisplayName": parts[0],
+                        "DisplayVersion": parts[1],
+                        "Publisher": parts[2] if len(parts) > 2 else "Unknown"
+                    })
+    
+    snap_out = run_cmd("snap list 2>/dev/null")
+    lines = snap_out.strip().split('\n')
+    if len(lines) > 1:
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                results["InstalledSoftware"].append({
+                    "DisplayName": parts[0] + " (snap)",
+                    "DisplayVersion": parts[1],
+                    "Publisher": parts[3] if len(parts) > 3 else "Unknown"
+                })
+except:
+    pass
+
+try:
+    # 12. Firewall Rules
+    ufw_out = run_cmd("ufw status numbered 2>/dev/null")
+    if ufw_out and "Status: active" in ufw_out:
+        for line in ufw_out.strip().split('\n'):
+            if "[" in line and "]" in line:
+                results["FirewallRules"].append({
+                    "DisplayName": line.strip(),
+                    "Direction": "In/Out",
+                    "Action": "UFW Rule",
+                    "Profile": "UFW",
+                    "Details": line.strip()
+                })
+    else:
+        firewalld_out = run_cmd("firewall-cmd --list-all 2>/dev/null")
+        if firewalld_out:
+            for line in firewalld_out.strip().split('\n'):
+                if line.strip():
+                    results["FirewallRules"].append({
+                        "DisplayName": line.strip(),
+                        "Direction": "N/A",
+                        "Action": "Firewalld Config",
+                        "Profile": "Firewalld",
+                        "Details": line.strip()
+                    })
+        else:
+            iptables_out = run_cmd("iptables -S 2>/dev/null")
+            if iptables_out:
+                for line in iptables_out.strip().split('\n'):
+                    if line.startswith('-P') or line.startswith('-A'):
+                        parts = line.split()
+                        action = ""
+                        if '-j' in parts:
+                            action = parts[parts.index('-j') + 1]
+                        elif '-P' in parts:
+                            action = parts[-1]
+                        
+                        direction = parts[1] if len(parts) > 1 else ""
+                        
+                        results["FirewallRules"].append({
+                            "DisplayName": line.strip(),
+                            "Direction": direction,
+                            "Action": action,
+                            "Profile": "iptables",
+                            "Details": line.strip()
                         })
 except:
     pass

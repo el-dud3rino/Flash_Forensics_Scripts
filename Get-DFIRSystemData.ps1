@@ -520,7 +520,35 @@ try {
 
 try {
     # 13. Firewall Rules
-    $Results.FirewallRules = Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' } | Select-Object DisplayName, @{Name='Profile';Expression={$_.Profile.ToString()}}, @{Name='Direction';Expression={$_.Direction.ToString()}}, @{Name='Action';Expression={$_.Action.ToString()}}
+    $FirewallRules = @()
+    $NetshOut = netsh advfirewall firewall show rule name=all verbose
+    $CurrentRule = $null
+
+    foreach ($Line in $NetshOut) {
+        if ($Line -match "^Rule Name:\s+(.*)") {
+            if ($CurrentRule -and $CurrentRule.Enabled -eq "Yes") {
+                $FirewallRules += [PSCustomObject]$CurrentRule
+            }
+            $CurrentRule = [ordered]@{
+                DisplayName = $matches[1].Trim()
+                Enabled = "No"
+            }
+        }
+        elseif ($CurrentRule) {
+            if ($Line -match "^-+$" -or $Line -match "^\s*$") { continue }
+            if ($Line -match "^([^:]+):\s+(.*)") {
+                $Key = $matches[1].Trim() -replace ' ', ''
+                $Val = $matches[2].Trim()
+                if ($Key -eq "Profiles") { $Key = "Profile" }
+                if ($Key -eq "Grouping") { $Key = "Group" }
+                $CurrentRule[$Key] = $Val
+            }
+        }
+    }
+    if ($CurrentRule -and $CurrentRule.Enabled -eq "Yes") {
+        $FirewallRules += [PSCustomObject]$CurrentRule
+    }
+    $Results.FirewallRules = $FirewallRules
 } catch { Write-Warning "Failed to collect Firewall Rules: $_" }
 
 try {

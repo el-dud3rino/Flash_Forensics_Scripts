@@ -780,10 +780,10 @@ $HtmlContent = @'
 
         function getDefaultCompareKeys(tabName) {
             switch(tabName) {
-                case 'Processes': return ['Name', 'Path'];
-                case 'Services': return ['Name', 'DisplayName', 'StartMode'];
-                case 'ScheduledTasks': return ['TaskName', 'State'];
-                case 'NetworkConnections': return ['ProcessName', 'Protocol', 'RemoteAddress', 'RemotePort'];
+                case 'Processes': return ['Name', 'Path', 'CommandLine', 'SHA256', 'Signer'];
+                case 'Services': return ['Name', 'DisplayName', 'PathName', 'StartMode', 'State'];
+                case 'ScheduledTasks': return ['TaskName', 'TaskPath', 'Command', 'Arguments'];
+                case 'NetworkConnections': return ['ProcessName', 'ProcessPath', 'Protocol', 'RemoteAddress', 'RemotePort', 'State'];
                 case 'Users': return ['Name', 'Enabled'];
                 case 'SystemPersistence': return ['Key', 'ValueName', 'Source'];
                 case 'StartupFiles': return ['Executable', 'Signer', 'Source'];
@@ -1355,7 +1355,7 @@ $HtmlContent = @'
                             }
                         } catch(e) {}
                     }
-                    if (currentTab === 'EventLogs' && kIdx === 0) {
+                    if ((currentTab === 'EventLogs' || currentTab === 'FirewallRules') && kIdx === 0) {
                         html += `<td>
                                    <span style="cursor:pointer; color:var(--accent); font-weight:bold; margin-right:10px; font-family:monospace;" 
                                          onclick="const e=document.getElementById('${trId}-exp'); e.style.display=e.style.display==='none'?'table-row':'none'; this.innerText=e.style.display==='none'?'[+]':'[-]';">[+]</span>
@@ -1366,7 +1366,7 @@ $HtmlContent = @'
                     }
                 });
                 html += '</tr>';
-                if (currentTab === 'EventLogs') {
+                if (currentTab === 'EventLogs' || currentTab === 'FirewallRules') {
                     const fullData = item ? Object.keys(item).map(k => `<strong style="color:var(--accent-hover);">${escapeHtml(k)}:</strong> ${escapeHtml(item[k])}`).join('<br>') : '';
                     const colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
                     html += `<tr id="${trId}-exp" style="display:none; background: rgba(0,0,0,0.2);">
