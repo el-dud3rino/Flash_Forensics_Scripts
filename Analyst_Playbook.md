@@ -44,6 +44,7 @@ This playbook provides a checklist of commands and locations used to manually ga
 ### Processes
 - **Goal**: Enumerate currently running processes.
 - **Description**: Uses WMI to list running processes and retrieves their file paths and parent process IDs.
+- **External Tools**: [Sysinternals Process Explorer](https://learn.microsoft.com/en-us/sysinternals/downloads/process-explorer) for advanced process tree visualization and malware analysis.
 - **Commands**:
   - `Get-CimInstance Win32_Process | Select-Object Name, ProcessId, ParentProcessId, Path, CommandLine`
 
@@ -63,6 +64,7 @@ This playbook provides a checklist of commands and locations used to manually ga
 ### Network Connections
 - **Goal**: Enumerate active network connections.
 - **Description**: Lists listening and established TCP and UDP endpoints, mapping them to process IDs.
+- **External Tools**: [Sysinternals TCPView](https://learn.microsoft.com/en-us/sysinternals/downloads/tcpview) for a live GUI view of all network endpoints and their owning processes.
 - **Commands**:
   - `Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess`
   - `Get-NetUDPEndpoint | Select-Object LocalAddress, LocalPort, OwningProcess`
@@ -78,6 +80,7 @@ This playbook provides a checklist of commands and locations used to manually ga
 ### System Persistence
 - **Goal**: Identify common registry-based persistence mechanisms.
 - **Description**: Checks standard Run, RunOnce, BootExecute keys and enumerates BITS transfer jobs.
+- **External Tools**: [Sysinternals Autoruns](https://learn.microsoft.com/en-us/sysinternals/downloads/autoruns) is the gold standard for comprehensively identifying persistence mechanisms across the entire OS (Registry, Services, Scheduled Tasks, WMI, etc).
 - **Commands**:
   - `Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"`
   - `Get-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"`
@@ -94,6 +97,9 @@ This playbook provides a checklist of commands and locations used to manually ga
 ### Execution Evidence
 - **Goal**: Identify evidence of recent program execution.
 - **Description**: Collects Windows Prefetch files and the PowerShell command history file.
+- **External Tools**: 
+  - [Eric Zimmerman's PECmd](https://ericzimmerman.github.io/#!index.md) to deeply parse and extract execution timestamps from `.pf` Prefetch files.
+  - [Eric Zimmerman's JLECmd](https://ericzimmerman.github.io/#!index.md) to parse Jump Lists for file access evidence.
 - **Commands**:
   - `Get-ChildItem -Path "C:\Windows\Prefetch\*.pf" -File`
   - `Get-Content (Get-PSReadLineOption).HistorySavePath`
@@ -123,6 +129,7 @@ This playbook provides a checklist of commands and locations used to manually ga
 ### Event Logs
 - **Goal**: Extract key security and operational event logs.
 - **Description**: Queries critical Event IDs (Logons, Process Creation, Services, Tasks) from the System, Security, and Microsoft-Windows-TerminalServices logs.
+- **External Tools**: [Eric Zimmerman's EvtxECmd](https://ericzimmerman.github.io/#!index.md) to bulk-parse raw `.evtx` files and output normalized CSV timelines of critical OS events.
 - **Commands**:
   - `Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624, 4625, 4688}`
   - `Get-WinEvent -FilterHashtable @{LogName='System'; Id=7045}`
