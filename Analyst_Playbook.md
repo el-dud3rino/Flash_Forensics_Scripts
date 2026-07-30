@@ -1,4 +1,4 @@
-# DFIR Junior Analyst Playbook
+# Host Analyst Playbook
 
 This playbook provides a checklist of commands and locations used to manually gather forensic artifacts, mirroring the automated collection performed by the Flash Forensics scripts.
 
