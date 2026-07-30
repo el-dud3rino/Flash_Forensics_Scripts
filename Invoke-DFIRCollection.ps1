@@ -2014,7 +2014,7 @@ $HtmlContent = @'
                 if (ev.category === 'ScheduledTasks') catColor = '#34d399';
                 if (ev.category === 'ExecutionEvidence') catColor = '#c084fc';
                 
-                html += `<tr style="cursor:pointer;" onclick="navigateToItem('${ev.category}', '${escapeHtml(ev.hash)}')">
+                html += `<tr style="cursor:pointer;" data-cat="${escapeHtml(ev.category)}" data-hash="${escapeHtml(ev.hash)}" onclick="navigateToItem(this.getAttribute('data-cat'), this.getAttribute('data-hash'))">
                     <td style="white-space: nowrap;">${ev.time.toLocaleString()}</td>
                     <td><span style="color: ${catColor}; font-weight: bold;">${ev.category}</span></td>
                     <td><div class="td-content">${escapeHtml(ev.summary)}</div></td>
@@ -2093,18 +2093,21 @@ $HtmlContent = @'
             function buildHtml(nodes) {
                 let html = '';
                 nodes.forEach(n => {
+                    const itemHash = hashArtifact(n, 'Processes');
                     let procText = `[${n._pid}] ${n.Name || 'Unknown'} - ${n.CommandLine || n.Path || ''}`;
-                    let contentHtml = `<div class="tree-node-content" onclick="showCellModal(this)">
+                    let contentHtml = `<div class="tree-node-content" data-cat="Processes" data-hash="${escapeHtml(itemHash)}" onclick="navigateToItem(this.getAttribute('data-cat'), this.getAttribute('data-hash'))">
                         <span>${escapeHtml(procText)}</span>`;
                     
                     n.services.forEach(s => {
                         let sText = s.ServiceRaw ? s.ServiceRaw : `Service: ${s.Name} (${s.State})`;
-                        contentHtml += `<span class="tree-badge service" onclick="event.stopPropagation(); showCellModal(this)">${escapeHtml(sText)}</span>`;
+                        const svcHash = hashArtifact(s, 'Services');
+                        contentHtml += `<span class="tree-badge service" data-cat="Services" data-hash="${escapeHtml(svcHash)}" onclick="event.stopPropagation(); navigateToItem(this.getAttribute('data-cat'), this.getAttribute('data-hash'))">${escapeHtml(sText)}</span>`;
                     });
                     
                     n.network.forEach(nt => {
                         let nText = nt.ConnectionRaw ? nt.ConnectionRaw : `Net: ${nt.Protocol} ${nt.LocalAddress}:${nt.LocalPort} -> ${nt.RemoteAddress || '*'}:${nt.RemotePort || '*'} (${nt.State})`;
-                        contentHtml += `<span class="tree-badge network" onclick="event.stopPropagation(); showCellModal(this)">${escapeHtml(nText)}</span>`;
+                        const netHash = hashArtifact(nt, 'NetworkConnections');
+                        contentHtml += `<span class="tree-badge network" data-cat="NetworkConnections" data-hash="${escapeHtml(netHash)}" onclick="event.stopPropagation(); navigateToItem(this.getAttribute('data-cat'), this.getAttribute('data-hash'))">${escapeHtml(nText)}</span>`;
                     });
                     
                     contentHtml += `</div>`;
