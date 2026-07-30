@@ -243,6 +243,9 @@ $ExistingData = New-Object System.Collections.ArrayList
 if (Test-Path $DataJsPath) {
     $FileContent = Get-Content $DataJsPath -Raw
     $JsonString = $FileContent -replace '^const dfirData = ', '' -replace ';\s*$', ''
+    # PowerShell 7's ConvertFrom-Json fails if an object has duplicate case-insensitive keys (like {"value": 1, "Value": "One"}).
+    # This happens due to PowerShell 5.1's Enum serialization. We sanitize it here before parsing to recover historical datasets.
+    $JsonString = $JsonString -replace '"value"\s*:', '"value_enum":'
     try {
         $Parsed = $JsonString | ConvertFrom-Json
         if ($Parsed) {
@@ -777,6 +780,9 @@ $HtmlContent = @'
         window.selectedHosts = new Set();
         window.hostOSMap = {};
         window.compareGroupKeys = {};
+        window.isDiffMode = false;
+        window.diffBaseTs = null;
+        window.diffTargetTs = null;
 
         function getDefaultCompareKeys(tabName) {
             switch(tabName) {
@@ -934,6 +940,99 @@ $HtmlContent = @'
             }
         }
 
+        function toggleDiffMode() {
+            window.isDiffMode = !window.isDiffMode;
+            if (window.isDiffMode) {
+                window.isCompareMode = false;
+                const runs = groupedSystems[selectedHostname];
+                if (runs && runs.length > 1) {
+                    window.diffTargetTs = runs[0].Timestamp || '';
+                    window.diffBaseTs = runs[1].Timestamp || '';
+                }
+            }
+            renderTimestampBadge();
+            switchTab(currentTab);
+        }
+
+        function renderTimestampBadge() {
+            const badgeContainer = document.getElementById('timestampBadge');
+            if (!selectedHostname || window.isCompareMode) {
+                badgeContainer.innerHTML = '';
+                return;
+            }
+            const runs = groupedSystems[selectedHostname];
+            if (runs.length <= 1) {
+                badgeContainer.innerHTML = runs[0].Timestamp ? `<span style="margin-left:10px;">Collected: ${runs[0].Timestamp}</span>` : '';
+                return;
+            }
+
+            if (!window.isDiffMode) {
+                let selectHtml = `<select id="datasetSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="selectDatasetByTimestamp(this.value)">`;
+                runs.forEach(r => { selectHtml += `<option value="${r.Timestamp || ''}">${r.Timestamp || 'Unknown Time'}</option>`; });
+                selectHtml += `</select>`;
+                selectHtml += `<button onclick="toggleDiffMode()" style="margin-left:10px; padding:3px 10px; background:var(--accent); color:white; border:none; border-radius:4px; cursor:pointer;">Diff Timelines</button>`;
+                badgeContainer.innerHTML = selectHtml;
+                if (currentComputer && currentComputer.Timestamp) {
+                    const el = document.getElementById('datasetSelect');
+                    if(el) el.value = currentComputer.Timestamp;
+                }
+            } else {
+                let bHtml = `<select id="diffBaseSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="window.diffBaseTs=this.value; switchTab(currentTab);">`;
+                runs.forEach(r => { bHtml += `<option value="${r.Timestamp || ''}" ${r.Timestamp === window.diffBaseTs ? 'selected' : ''}>Base: ${r.Timestamp || 'Unknown Time'}</option>`; });
+                bHtml += `</select>`;
+                
+                let tHtml = `<select id="diffTargetSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="window.diffTargetTs=this.value; switchTab(currentTab);">`;
+                runs.forEach(r => { tHtml += `<option value="${r.Timestamp || ''}" ${r.Timestamp === window.diffTargetTs ? 'selected' : ''}>Target: ${r.Timestamp || 'Unknown Time'}</option>`; });
+                tHtml += `</select>`;
+                
+                let selectHtml = bHtml + tHtml + `<button onclick="toggleDiffMode()" style="margin-left:10px; padding:3px 10px; background:var(--danger); color:white; border:none; border-radius:4px; cursor:pointer;">Exit Diff</button>`;
+                badgeContainer.innerHTML = selectHtml;
+            }
+        }
+        
+        function computeDiff(baseArr, targetArr, tabName) {
+            let bArr = Array.isArray(baseArr) ? baseArr : (baseArr ? [baseArr] : []);
+            let tArr = Array.isArray(targetArr) ? targetArr : (targetArr ? [targetArr] : []);
+            
+            let baseMap = new Map();
+            let diffArr = [];
+            
+            bArr.forEach(item => {
+                let h = hashArtifact(item, tabName);
+                if (!baseMap.has(h)) baseMap.set(h, []);
+                baseMap.get(h).push(item);
+            });
+            
+            let targetMap = new Map();
+            tArr.forEach(item => {
+                let h = hashArtifact(item, tabName);
+                if (!targetMap.has(h)) targetMap.set(h, []);
+                targetMap.get(h).push(item);
+            });
+            
+            tArr.forEach(item => {
+                let h = hashArtifact(item, tabName);
+                let cloned = Object.assign({}, item);
+                if (!baseMap.has(h)) {
+                    cloned._DiffStatus = 'Added';
+                } else {
+                    cloned._DiffStatus = 'Unchanged';
+                }
+                diffArr.push(cloned);
+            });
+            
+            bArr.forEach(item => {
+                let h = hashArtifact(item, tabName);
+                if (!targetMap.has(h)) {
+                    let cloned = Object.assign({}, item);
+                    cloned._DiffStatus = 'Removed';
+                    diffArr.push(cloned);
+                }
+            });
+            
+            return diffArr;
+        }
+
         function selectHostname(name) {
             if (window.isCompareMode) return;
             selectedHostname = name;
@@ -941,21 +1040,11 @@ $HtmlContent = @'
             
             renderComputerList();
             
-            const badgeContainer = document.getElementById('timestampBadge');
             const runs = groupedSystems[name];
-            
-            if (runs.length > 1) {
-                let selectHtml = `<select id="datasetSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="selectDatasetByTimestamp(this.value)">`;
-                runs.forEach(r => {
-                    selectHtml += `<option value="${r.Timestamp || ''}">${r.Timestamp || 'Unknown Time'}</option>`;
-                });
-                selectHtml += `</select>`;
-                badgeContainer.innerHTML = selectHtml;
+            if (!window.isDiffMode) {
                 selectDatasetByTimestamp(runs[0].Timestamp || '');
-            } else {
-                badgeContainer.innerHTML = runs[0].Timestamp ? `<span style="margin-left:10px;">Collected: ${runs[0].Timestamp}</span>` : '';
-                selectDataset(runs[0]);
             }
+            renderTimestampBadge();
         }
         
         function selectDatasetByTimestamp(ts) {
@@ -1294,7 +1383,7 @@ $HtmlContent = @'
             (Array.isArray(dataArray) ? dataArray : [dataArray]).forEach(item => {
                 if(item) Object.keys(item).forEach(k => keys.add(k));
             });
-            keys = Array.from(keys);
+            keys = Array.from(keys).filter(k => !k.startsWith('_'));
             
             // Limit Chronological EventLogs view to generic columns
             if (currentTab === 'EventLogs') {
@@ -1311,6 +1400,9 @@ $HtmlContent = @'
             let html = titleHtml + '<table><thead><tr>';
             if (currentTab !== 'FlaggedItems') {
                 html += '<th style="width:50px; text-align:center;">Flag</th>';
+            }
+            if (window.isDiffMode) {
+                html += '<th style="width:100px; text-align:center;">Diff</th>';
             }
             keys.forEach(k => {
                 let sortIndicator = "";
@@ -1336,18 +1428,34 @@ $HtmlContent = @'
             html += '</tr></thead><tbody>';
             
             if (arr.length === 0) {
-                html += `<tr><td colspan="${keys.length + 1}"><div class="empty-state">All items are hidden by your filters.</div></td></tr>`;
+                html += `<tr><td colspan="${keys.length + (window.isDiffMode ? 2 : 1)}"><div class="empty-state">All items are hidden by your filters.</div></td></tr>`;
             } else {
             window.renderedItems = window.renderedItems || {};
             arr.forEach(item => {
+                let rowStyle = '';
+                if (window.isDiffMode && item && item._DiffStatus) {
+                    if (item._DiffStatus === 'Added') rowStyle = 'background: rgba(40,167,69,0.15);';
+                    if (item._DiffStatus === 'Removed') rowStyle = 'background: rgba(220,53,69,0.15); text-decoration: line-through;';
+                }
                 const trId = 'tr-' + Math.random().toString(36).substr(2, 9);
                 window.renderedItems[trId] = { system: selectedHostname, category: currentTab, data: item, timestamp: (typeof currentComputer !== 'undefined' && currentComputer ? (currentComputer.Timestamp || '') : '') };
-                html += `<tr id="${trId}-main">`;
                 
+                const isFlagged = item && window.flaggedHashes && window.flaggedHashes.has(hashArtifact(item, currentTab));
+                html += `<tr id="${trId}" style="${rowStyle}">`;
                 if (currentTab !== 'FlaggedItems') {
-                    const isFlagged = isItemFlagged(item) ? 'flagged' : '';
-                    const flagIcon = isItemFlagged(item) ? '&#128681;' : '&#9872;';
-                    html += `<td style="text-align:center; vertical-align:middle;"><button class="flag-btn ${isFlagged}" onclick="toggleFlag('${trId}', event)" title="Flag for later evaluation">${flagIcon}</button></td>`;
+                    if (isFlagged) {
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', '${escapeHtml(hashArtifact(item, currentTab))}')"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;">&#128681;</span></td>`;
+                    } else {
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', '${escapeHtml(hashArtifact(item, currentTab))}')"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">&#9873;</span></td>`;
+                    }
+                }
+                
+                if (window.isDiffMode) {
+                    let diffBadge = '';
+                    if (item && item._DiffStatus === 'Added') diffBadge = '<span style="color: #28a745; font-weight:bold;">+ Added</span>';
+                    else if (item && item._DiffStatus === 'Removed') diffBadge = '<span style="color: #dc3545; font-weight:bold;">- Removed</span>';
+                    else diffBadge = '<span style="color: var(--text-muted);">Unchanged</span>';
+                    html += `<td style="text-align:center; vertical-align:top;">${diffBadge}</td>`;
                 }
                 
                 keys.forEach((key, kIdx) => {
@@ -1375,7 +1483,8 @@ $HtmlContent = @'
                 html += '</tr>';
                 if (currentTab === 'EventLogs' || currentTab === 'FirewallRules') {
                     const fullData = item ? Object.keys(item).map(k => `<strong style="color:var(--accent-hover);">${escapeHtml(k)}:</strong> ${escapeHtml(item[k])}`).join('<br>') : '';
-                    const colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
+                    let colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
+                    if (window.isDiffMode) colSpanCount += 1;
                     html += `<tr id="${trId}-exp" style="display:none; background: rgba(0,0,0,0.2);">
                                <td colspan="${colSpanCount}" style="padding:15px; border-left: 3px solid var(--accent);">
                                  <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; color:var(--text);">${fullData}</div>
@@ -1547,6 +1656,69 @@ $HtmlContent = @'
                         container.innerHTML = buildTableHTML(stackedArr, '', 'main-table');
                     }
                 }
+            } else if (window.isDiffMode) {
+                const runs = groupedSystems[selectedHostname] || [];
+                let baseSys = runs.find(r => r.Timestamp === window.diffBaseTs) || runs[0];
+                let targetSys = runs.find(r => r.Timestamp === window.diffTargetTs) || runs[0];
+                
+                let bData = [];
+                let tData = [];
+                if (tabName === 'Users') {
+                    let bl = baseSys['LocalUsers'] ? (Array.isArray(baseSys['LocalUsers']) ? baseSys['LocalUsers'] : [baseSys['LocalUsers']]) : [];
+                    let bp = baseSys['PrivilegedAccess'] ? (Array.isArray(baseSys['PrivilegedAccess']) ? baseSys['PrivilegedAccess'] : [baseSys['PrivilegedAccess']]) : [];
+                    bl.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'LocalUsers'; bData.push(copy); });
+                    bp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'PrivilegedAccess'; bData.push(copy); });
+                    
+                    let tl = targetSys['LocalUsers'] ? (Array.isArray(targetSys['LocalUsers']) ? targetSys['LocalUsers'] : [targetSys['LocalUsers']]) : [];
+                    let tp = targetSys['PrivilegedAccess'] ? (Array.isArray(targetSys['PrivilegedAccess']) ? targetSys['PrivilegedAccess'] : [targetSys['PrivilegedAccess']]) : [];
+                    tl.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'LocalUsers'; tData.push(copy); });
+                    tp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'PrivilegedAccess'; tData.push(copy); });
+                } else {
+                    bData = baseSys[tabName] ? (Array.isArray(baseSys[tabName]) ? baseSys[tabName] : [baseSys[tabName]]) : [];
+                    tData = targetSys[tabName] ? (Array.isArray(targetSys[tabName]) ? targetSys[tabName] : [targetSys[tabName]]) : [];
+                }
+                
+                let arrData = computeDiff(bData, tData, tabName);
+                
+                let shouldGroup = false;
+                let groupProp = 'Source';
+                
+                if (tabName === 'Users') { shouldGroup = true; groupProp = '_CompareType'; }
+                else if (tabName === 'EventLogs' && window.eventLogGroupMode) { shouldGroup = true; groupProp = 'EventId'; }
+                else if (tabName !== 'EventLogs' && arrData.some(i => i && i.Source)) { shouldGroup = true; groupProp = 'Source'; }
+                
+                if (shouldGroup) {
+                    const groupedBySource = {};
+                    arrData.forEach(item => {
+                        if (!item) return;
+                        const src = item[groupProp] || ('Unknown ' + groupProp);
+                        if (!groupedBySource[src]) groupedBySource[src] = [];
+                        groupedBySource[src].push(item);
+                    });
+                    
+                    Object.keys(groupedBySource).forEach((src, idx) => {
+                        const groupId = 'group-' + tabName + '-' + idx;
+                        let headerText = src;
+                        if (groupProp === 'EventId') {
+                            const fItem = groupedBySource[src][0];
+                            const eName = (fItem && fItem.EventName && fItem.EventName !== 'Unknown') ? ': ' + fItem.EventName : '';
+                            headerText = 'Event ID ' + src + eName;
+                        }
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('${groupId}'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">${escapeHtml(headerText)}</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="${groupId}">${buildTableHTML(groupedBySource[src], '', groupId)}</div>
+                        `;
+                    });
+                } else {
+                    html += buildTableHTML(arrData, '', 'main-table');
+                }
+                container.innerHTML = html;
             } 
             // SINGLE HOST MODE
             else {

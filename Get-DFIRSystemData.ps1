@@ -90,7 +90,7 @@ try {
         $TaskDetails += [PSCustomObject]@{
             TaskName = $Task.TaskName
             TaskPath = $Task.TaskPath
-            State = $Task.State
+            State = "$($Task.State)"
             Author = $Task.Author
             Command = ($Task.Actions | Where-Object { $_.Execute } | Select-Object -ExpandProperty Execute) -join ";"
             Arguments = ($Task.Actions | Where-Object { $_.Arguments } | Select-Object -ExpandProperty Arguments) -join ";"
@@ -105,7 +105,7 @@ try {
 
 try {
     # 4. Network Connections (Listening and Established)
-    $TCP = Get-NetTCPConnection -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess, @{Name="Protocol";Expression={"TCP"}}
+    $TCP = Get-NetTCPConnection -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, @{Name="State";Expression={"$($_.State)"}}, OwningProcess, @{Name="Protocol";Expression={"TCP"}}
     $UDP = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, @{Name="RemoteAddress";Expression={""}}, @{Name="RemotePort";Expression={""}}, @{Name="State";Expression={"Listening"}}, OwningProcess, @{Name="Protocol";Expression={"UDP"}}
     
     $NetConns = @()
