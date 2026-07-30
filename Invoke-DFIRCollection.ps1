@@ -1495,7 +1495,7 @@ $HtmlContent = @'
                 
                 const itemHash = hashArtifact(item, currentTab);
                 const isHighlighted = (window.navHighlightHash && window.navHighlightHash === itemHash);
-                const isFlagged = item && window.flaggedHashes && window.flaggedHashes.has(itemHash);
+                const isFlagged = item && isItemFlagged(item);
                 
                 let rowStyle = '';
                 if (isHighlighted) {
