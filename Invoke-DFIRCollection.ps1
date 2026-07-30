@@ -77,7 +77,9 @@ if ($BuildDashboardOnly) {
     $ExistingJsonFiles = Get-ChildItem -Path $OutputDirectory -Filter "*-DFIR_Data.json" -Recurse -ErrorAction SilentlyContinue
     foreach ($file in $ExistingJsonFiles) {
         try {
-            $Parsed = Get-Content $file.FullName -Raw | ConvertFrom-Json
+            $RawJson = Get-Content $file.FullName -Raw
+            $RawJson = $RawJson -replace '"value"\s*:', '"value_enum":'
+            $Parsed = $RawJson | ConvertFrom-Json
             if ($Parsed) {
                 $Results += $Parsed
             }
