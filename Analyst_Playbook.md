@@ -2,6 +2,35 @@
 
 This playbook provides a checklist of commands and locations used to manually gather forensic artifacts, mirroring the automated collection performed by the Flash Forensics scripts.
 
+## Table of Contents
+- [Windows Commands](#windows-commands)
+  - [System Information](#system-information)
+  - [Processes](#processes)
+  - [Services](#services)
+  - [Scheduled Tasks](#scheduled-tasks)
+  - [Network Connections](#network-connections)
+  - [Local Users and Privileged Access](#local-users-and-privileged-access)
+  - [System Persistence](#system-persistence)
+  - [Startup Files](#startup-files)
+  - [Execution Evidence](#execution-evidence)
+  - [USB History](#usb-history)
+  - [Installed Software](#installed-software)
+  - [Firewall Rules](#firewall-rules)
+  - [Event Logs](#event-logs)
+- [Linux Commands](#linux-commands)
+  - [System Information](#system-information-1)
+  - [Processes](#processes-1)
+  - [Services](#services-1)
+  - [Scheduled Tasks](#scheduled-tasks-1)
+  - [Network Connections](#network-connections-1)
+  - [Kernel Modules](#kernel-modules)
+  - [Local Users and Privileged Access](#local-users-and-privileged-access-1)
+  - [System Persistence and Startup Files](#system-persistence-and-startup-files)
+  - [Execution Evidence](#execution-evidence-1)
+  - [Installed Software](#installed-software-1)
+  - [Firewall Rules](#firewall-rules-1)
+  - [Event Logs](#event-logs-1)
+
 ## Windows Commands
 
 ### System Information
