@@ -8,7 +8,8 @@ A powerful, agentless Digital Forensics and Incident Response (DFIR) collection 
 - **Fileless Linux Execution**: The Python payload (`Get-LinuxDFIRSystemData.py`) is piped directly into the remote Linux system's memory over SSH. No scripts are dropped to the disk of the target!
 - **Interactive HTML Dashboard**: Automatically generates a dark-themed, premium HTML dashboard (`index.html`) that works completely offline with zero web server requirements. Features a collapsible sidebar to maximize screen real-estate.
 - **Triage Flagging (New!)**: Easily bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are strictly bound to the timeline of the dataset they were captured in. You can toggle "Include all hosts and historical datasets" to view every flag simultaneously, and instantly export them to a CSV for your final incident report.
-- **Compare Mode / Frequency Analysis (New!)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems (e.g., "Select All Windows" or arbitrary checkboxes). The dashboard intelligently filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, bubbling highly unique outliers (like a rogue service seen on only 1 out of 50 machines) directly to the top.
+- **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard intelligently filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, bubbling highly unique outliers directly to the top.
+- **Dataset Diff Mode (Single Host)**: Need to see what changed on a single machine between yesterday and today? Click "Diff Timelines" when viewing a host to select a Base and Target dataset. The dashboard instantly computes the differences, explicitly highlighting new items in green (Added) and missing items in red (Removed).
 - **Temporal Datasets**: Each run creates a timestamped dataset folder (e.g., `Host-YYYY-MM-DD_HHMMZ`), allowing you to review and compare historical captures of the same system.
 - **Global Search**: Search instantly across all categories on a specific system or sweep across all collected systems globally (both latest datasets and all-time history).
 - **Raw Data Export**: Also exports standard CSV files for each artifact type per machine, ideal for ingestion into SIEMs or long-term archiving.
@@ -97,6 +98,13 @@ Every time you run a collection, the data is intelligently appended into your da
 1. Navigate to the `FlashForensics_Output` folder.
 2. Double-click **`index.html`** to open it in your default web browser.
 3. Select any Windows or Linux dataset from the left sidebar to view its artifacts. The sidebar can be collapsed via the `☰` icon to maximize table space.
+
+### Timeline Diffing (Historical Comparison)
+If you run the collection script on the same system multiple times, the dashboard automatically stacks your datasets. You can compare changes over time using the built-in diff engine:
+1. Select a host that has multiple historical datasets.
+2. Click the **Diff Timelines** button that appears in the top navigation bar.
+3. Select a **Base** (older) dataset and a **Target** (newer) dataset.
+4. The dashboard will automatically compare the two datasets and inject a **Diff** column into the tables. This allows you to instantly see which artifacts were `+ Added`, `- Removed`, or `Unchanged`. You can also filter directly on these statuses using the column dropdown!
 
 ## Directory Structure
 
