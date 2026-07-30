@@ -1,0 +1,192 @@
+# DFIR Junior Analyst Playbook
+
+This playbook provides a checklist of commands and locations used to manually gather forensic artifacts, mirroring the automated collection performed by the Flash Forensics scripts.
+
+## Windows Commands
+
+### System Information
+- **Goal**: Gather basic system information including OS version, hostname, and uptime.
+- **Description**: Uses WMI to extract OS and Computer System details, and enumerates IPv4 addresses.
+- **Commands**:
+  - `Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, LastBootUpTime, OSArchitecture`
+  - `Get-CimInstance Win32_ComputerSystem | Select-Object Name, Domain`
+  - `Get-NetIPAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -notmatch "Loopback"`
+
+### Processes
+- **Goal**: Enumerate currently running processes.
+- **Description**: Uses WMI to list running processes and retrieves their file paths and parent process IDs.
+- **Commands**:
+  - `Get-CimInstance Win32_Process | Select-Object Name, ProcessId, ParentProcessId, Path, CommandLine`
+
+### Services
+- **Goal**: Enumerate installed Windows services.
+- **Description**: Lists all services, their state, and the executable path.
+- **Commands**:
+  - `Get-CimInstance Win32_Service | Select-Object Name, DisplayName, State, StartMode, PathName, ProcessId`
+
+### Scheduled Tasks
+- **Goal**: Enumerate configured scheduled tasks.
+- **Description**: Lists scheduled tasks and their associated actions/commands.
+- **Commands**:
+  - `Get-ScheduledTask | Select-Object TaskName, TaskPath, State, Author`
+  - `(Get-ScheduledTask).Actions`
+
+### Network Connections
+- **Goal**: Enumerate active network connections.
+- **Description**: Lists listening and established TCP and UDP endpoints, mapping them to process IDs.
+- **Commands**:
+  - `Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess`
+  - `Get-NetUDPEndpoint | Select-Object LocalAddress, LocalPort, OwningProcess`
+
+### Local Users and Privileged Access
+- **Goal**: Enumerate local user accounts and administrative group members.
+- **Description**: Lists all local users and the members of the Administrators and Remote Desktop Users groups.
+- **Commands**:
+  - `Get-LocalUser | Select-Object Name, Enabled, Description, LastLogon`
+  - `Get-LocalGroupMember -Group "Administrators"`
+  - `Get-LocalGroupMember -Group "Remote Desktop Users"`
+
+### System Persistence
+- **Goal**: Identify common registry-based persistence mechanisms.
+- **Description**: Checks standard Run, RunOnce, BootExecute keys and enumerates BITS transfer jobs.
+- **Commands**:
+  - `Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"`
+  - `Get-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"`
+  - `Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name "BootExecute"`
+  - `Get-BitsTransfer -AllUsers`
+
+### Startup Files
+- **Goal**: Enumerate files in startup folders.
+- **Description**: Lists executables and scripts configured to run on user login.
+- **Commands**:
+  - `Get-ChildItem -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\*" -File -Force`
+  - `Get-ChildItem -Path "C:\Users\*\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\*" -File -Force`
+
+### Execution Evidence
+- **Goal**: Identify evidence of recent program execution.
+- **Description**: Collects Windows Prefetch files and the PowerShell command history file.
+- **Commands**:
+  - `Get-ChildItem -Path "C:\Windows\Prefetch\*.pf" -File`
+  - `Get-Content (Get-PSReadLineOption).HistorySavePath`
+
+### USB History
+- **Goal**: Enumerate historically connected USB devices.
+- **Description**: Queries the USBSTOR registry key to identify previously connected thumb drives.
+- **Commands**:
+  - `Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR" | Get-ChildItem | Get-ItemProperty`
+
+### Installed Software
+- **Goal**: Enumerate installed applications.
+- **Description**: Queries Uninstall registry keys across HKLM and HKCU for installed programs.
+- **Commands**:
+  - `Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"`
+  - `Get-ItemProperty "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"`
+  - `Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"`
+
+### Firewall Rules
+- **Goal**: Enumerate active Windows Firewall rules.
+- **Description**: Extracts enabled inbound and outbound firewall rules.
+- **Commands**:
+  - `Get-NetFirewallRule -Enabled True | Get-NetFirewallAddressFilter`
+  - `Get-NetFirewallRule -Enabled True | Get-NetFirewallPortFilter`
+  - `Get-NetFirewallRule -Enabled True | Get-NetFirewallApplicationFilter`
+
+### Event Logs
+- **Goal**: Extract key security and operational event logs.
+- **Description**: Queries critical Event IDs (Logons, Process Creation, Services, Tasks) from the System, Security, and Microsoft-Windows-TerminalServices logs.
+- **Commands**:
+  - `Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624, 4625, 4688}`
+  - `Get-WinEvent -FilterHashtable @{LogName='System'; Id=7045}`
+
+---
+
+## Linux Commands
+
+### System Information
+- **Goal**: Gather basic system information including OS version, kernel, and uptime.
+- **Description**: Reads OS release files, uname, and uptime utilities.
+- **Commands**:
+  - `uname -a`
+  - `cat /etc/os-release | grep PRETTY_NAME`
+  - `uptime -p`
+  - `ip -4 addr show`
+
+### Processes
+- **Goal**: Enumerate currently running processes.
+- **Description**: Uses `ps` to list running processes with parent IDs and start times.
+- **Commands**:
+  - `ps -eo pid,ppid,user,start_time,command`
+
+### Services
+- **Goal**: Enumerate installed systemd services.
+- **Description**: Lists all services and their active states using systemctl or service.
+- **Commands**:
+  - `systemctl list-units --type=service --all --no-pager --no-legend`
+  - `service --status-all`
+
+### Scheduled Tasks
+- **Goal**: Enumerate configured cron jobs and systemd timers.
+- **Description**: Reads user crontabs, system crontabs, and systemd timers.
+- **Commands**:
+  - `cat /etc/crontab /etc/cron.d/*`
+  - `for u in $(cat /etc/passwd | cut -d: -f1); do crontab -u $u -l; done`
+  - `systemctl list-timers --all --no-pager --no-legend`
+
+### Network Connections
+- **Goal**: Enumerate active network connections.
+- **Description**: Lists listening and established TCP and UDP endpoints using `ss` or `netstat`.
+- **Commands**:
+  - `ss -tupan`
+  - `netstat -tupan`
+
+### Kernel Modules
+- **Goal**: Enumerate loaded kernel modules.
+- **Description**: Lists actively loaded kernel modules using `lsmod`.
+- **Commands**:
+  - `lsmod`
+
+### Local Users and Privileged Access
+- **Goal**: Enumerate local user accounts and users with sudo privileges.
+- **Description**: Parses `/etc/passwd` for users and checks `/etc/sudoers` and `wheel/sudo` groups.
+- **Commands**:
+  - `cat /etc/passwd`
+  - `cat /etc/sudoers | grep -v '^#'`
+  - `cat /etc/group | grep -E '^(sudo|wheel):'`
+
+### System Persistence and Startup Files
+- **Goal**: Identify common persistence mechanisms and startup scripts.
+- **Description**: Reads shell profiles, `rc.local`, systemd generators, and init scripts.
+- **Commands**:
+  - `cat /etc/rc.local ~/.bash_profile ~/.bashrc ~/.profile /etc/profile`
+  - `cat ~/.ssh/authorized_keys /root/.ssh/authorized_keys`
+  - `ls -la /etc/init.d/ /etc/rc*.d/`
+
+### Execution Evidence
+- **Goal**: Identify evidence of recent program execution and commands.
+- **Description**: Reads shell history files and sudo execution logs.
+- **Commands**:
+  - `cat ~/.bash_history ~/.zsh_history`
+  - `cat /var/log/auth.log | grep sudo`
+
+### Installed Software
+- **Goal**: Enumerate installed packages.
+- **Description**: Queries dpkg, rpm, or snap for installed software based on the package manager.
+- **Commands**:
+  - `dpkg-query -W -f='${binary:Package}|${Version}|${Maintainer}\n'`
+  - `rpm -qa --qf '%{NAME}|%{VERSION}|%{VENDOR}\n'`
+  - `snap list`
+
+### Firewall Rules
+- **Goal**: Enumerate active firewall rules.
+- **Description**: Extracts configuration from ufw, firewalld, or raw iptables.
+- **Commands**:
+  - `ufw status numbered`
+  - `firewall-cmd --list-all`
+  - `iptables -S`
+
+### Event Logs
+- **Goal**: Extract key authentication and system event logs.
+- **Description**: Reads the tail of common syslog and authentication logs.
+- **Commands**:
+  - `tail -n 500 /var/log/auth.log /var/log/secure`
+  - `tail -n 500 /var/log/syslog /var/log/messages`
