@@ -290,7 +290,7 @@ try {
     )
     
     foreach ($Path in $StartupPaths) {
-        $Files = Get-ChildItem -Path $Path -File -ErrorAction SilentlyContinue
+        $Files = Get-ChildItem -Path $Path -File -Force -ErrorAction SilentlyContinue
         foreach ($File in $Files) {
             $Hash = ""
             $Sign = ""

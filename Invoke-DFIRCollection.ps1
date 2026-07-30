@@ -78,7 +78,7 @@ if ($BuildDashboardOnly) {
     foreach ($file in $ExistingJsonFiles) {
         try {
             $RawJson = Get-Content $file.FullName -Raw
-            $RawJson = $RawJson -replace '"value"\s*:', '"value_enum":'
+            $RawJson = $RawJson -creplace '"value"\s*:', '"value_enum":'
             $Parsed = $RawJson | ConvertFrom-Json
             if ($Parsed) {
                 $Results += $Parsed
@@ -247,7 +247,7 @@ if (Test-Path $DataJsPath) {
     $JsonString = $FileContent -replace '^const dfirData = ', '' -replace ';\s*$', ''
     # PowerShell 7's ConvertFrom-Json fails if an object has duplicate case-insensitive keys (like {"value": 1, "Value": "One"}).
     # This happens due to PowerShell 5.1's Enum serialization. We sanitize it here before parsing to recover historical datasets.
-    $JsonString = $JsonString -replace '"value"\s*:', '"value_enum":'
+    $JsonString = $JsonString -creplace '"value"\s*:', '"value_enum":'
     try {
         $Parsed = $JsonString | ConvertFrom-Json
         if ($Parsed) {
@@ -946,6 +946,8 @@ $HtmlContent = @'
             window.isDiffMode = !window.isDiffMode;
             if (window.isDiffMode) {
                 window.isCompareMode = false;
+                currentSortColumn = '_DiffStatus';
+                currentSortDirection = 'asc';
                 const runs = groupedSystems[selectedHostname];
                 if (runs && runs.length > 1) {
                     window.diffTargetTs = runs[0].Timestamp || '';
@@ -1351,6 +1353,15 @@ $HtmlContent = @'
                 arr.sort((a, b) => {
                     let valA = a ? a[currentSortColumn] : "";
                     let valB = b ? b[currentSortColumn] : "";
+                    
+                    if (currentSortColumn === '_DiffStatus') {
+                        const order = { 'Added': 1, 'Removed': 2, 'Unchanged': 3 };
+                        let orderA = order[valA] || 4;
+                        let orderB = order[valB] || 4;
+                        if (orderA < orderB) return currentSortDirection === 'asc' ? -1 : 1;
+                        if (orderA > orderB) return currentSortDirection === 'asc' ? 1 : -1;
+                        return 0;
+                    }
                     
                     if (valA === null || valA === undefined) valA = "";
                     if (valB === null || valB === undefined) valB = "";
