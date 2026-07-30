@@ -290,8 +290,8 @@ $NetworkPlaybookContent = ""
 if (Test-Path $HostPlaybookPath) { $HostPlaybookContent = Get-Content $HostPlaybookPath -Raw }
 if (Test-Path $NetworkPlaybookPath) { $NetworkPlaybookContent = Get-Content $NetworkPlaybookPath -Raw }
 
-$HostPlaybookJson = $HostPlaybookContent | ConvertTo-Json -Compress
-$NetworkPlaybookJson = $NetworkPlaybookContent | ConvertTo-Json -Compress
+$HostPlaybookJson = ConvertTo-Json -InputObject "$HostPlaybookContent" -Compress
+$NetworkPlaybookJson = ConvertTo-Json -InputObject "$NetworkPlaybookContent" -Compress
 
 # Generate HTML Dashboard
 $HtmlPath = Join-Path -Path $PSScriptRoot -ChildPath "index.html"
@@ -908,7 +908,7 @@ $HtmlContent = @'
             const newWin = window.open('', '_blank');
             newWin.document.write(`
                 <html><head><title>${name} Playbook</title>
-                <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></scr`+`ipt>
+                <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
                 <style>body { font-family: sans-serif; padding: 20px; line-height: 1.6; max-width: 900px; margin: 0 auto; color: #333; background: #f9f9f9; } pre { background: #eee; padding: 10px; overflow-x: auto; font-family:monospace; } code { background: #eee; padding: 2px 4px; border-radius: 3px; font-family:monospace; } h1,h2,h3 { border-bottom: 1px solid #ccc; padding-bottom: 5px; color: #2c3e50; } table { border-collapse: collapse; width: 100%; margin-bottom:20px; } th, td { border: 1px solid #ccc; padding: 8px; text-align: left; } th { background: #ddd; }</style>
                 </head><body>
                 <div id="content"></div>
@@ -918,7 +918,7 @@ $HtmlContent = @'
                     } else {
                         document.getElementById('content').innerHTML = "<div style='background:#fee; padding:10px; margin-bottom:20px; border-left:4px solid red;'>Warning: Could not load Markdown renderer (offline mode). Displaying raw text.</div><pre style='white-space:pre-wrap;'>" + ${JSON.stringify(md)}.replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</pre>";
                     }
-                </scr`+`ipt>
+                <\/script>
                 </body></html>
             `);
             newWin.document.close();
