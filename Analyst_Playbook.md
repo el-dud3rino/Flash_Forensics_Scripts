@@ -17,6 +17,7 @@ This playbook provides a checklist of commands and locations used to manually ga
   - [Installed Software](#installed-software)
   - [Firewall Rules](#firewall-rules)
   - [Event Logs](#event-logs)
+  - [Super Timeline Generation (Plaso)](#super-timeline-generation-plaso)
 - [Linux Commands](#linux-commands)
   - [System Information](#system-information-1)
   - [Processes](#processes-1)
@@ -137,6 +138,16 @@ This playbook provides a checklist of commands and locations used to manually ga
 - **Commands**:
   - `Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624, 4625, 4688}`
   - `Get-WinEvent -FilterHashtable @{LogName='System'; Id=7045}`
+
+### Super Timeline Generation (Plaso)
+- **Goal**: Create an integrated, chronological super-timeline of all system activity.
+- **Description**: After gathering raw artifacts (Prefetch, Event Logs, Registry Hives, MFT, etc.), you can ingest them into [Plaso (log2timeline)](https://plaso.readthedocs.io/en/latest/) to correlate events across different sources into a single unified timeline.
+- **External Tools**: Plaso suite (`log2timeline.py` for extraction, `psort.py` for filtering and CSV generation).
+- **Commands**:
+  - *Extract artifacts into a Plaso storage file*:
+    `log2timeline.py --parsers "winreg,winevtx,prefetch,pe" system_timeline.plaso "C:\Path\To\Extracted\Artifacts"`
+  - *Filter and output to a chronological CSV (e.g., filtering for a specific date range)*:
+    `psort.py -o l2tcsv -w timeline_output.csv "date > '2023-01-01 00:00:00' AND date < '2023-12-31 23:59:59'" system_timeline.plaso`
 
 ---
 
