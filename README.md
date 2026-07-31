@@ -1,22 +1,22 @@
 # Flash Forensics Scripts
 
-A powerful, agentless Digital Forensics and Incident Response (DFIR) collection tool built entirely in PowerShell. This suite gathers critical forensic artifacts from local or remote Windows endpoints—and natively via SSH from Linux endpoints—automatically compiling them into an interactive, sleek HTML dashboard for immediate cross-platform analysis.
+An agentless Digital Forensics and Incident Response (DFIR) collection tool built entirely in PowerShell. This suite gathers forensic artifacts from local or remote Windows endpoints—and natively via SSH from Linux endpoints—compiling them into an HTML dashboard for cross-platform analysis.
 
 ## Features
 
 - **Cross-Platform & Agentless**: Collects from Windows (via WinRM `Invoke-Command` or locally) and Linux (via native `ssh.exe` pipe), requiring zero agent installations.
 - **Fileless Linux Execution**: The Python payload (`Get-LinuxDFIRSystemData.py`) is piped directly into the remote Linux system's memory over SSH. No scripts are dropped to the disk of the target!
-- **Interactive HTML Dashboard**: Automatically generates a dark-themed, premium HTML dashboard (`index.html`) that works completely offline with zero web server requirements. Features a collapsible sidebar to maximize screen real-estate.
-- **Triage Flagging (New!)**: Easily bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are strictly bound to the timeline of the dataset they were captured in. You can toggle "Include all hosts and historical datasets" to view every flag simultaneously, and instantly export them to a CSV for your final incident report.
-- **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard intelligently filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, bubbling highly unique outliers directly to the top.
-- **Dataset Diff Mode (Single Host)**: Need to see what changed on a single machine between yesterday and today? Click "Diff Timelines" when viewing a host to select a Base and Target dataset. The dashboard instantly computes the differences, explicitly highlighting new items in green (Added) and missing items in red (Removed).
+- **Interactive HTML Dashboard**: Automatically generates an HTML dashboard (`index.html`) that works completely offline without a web server. Features a collapsible sidebar to maximize screen real-estate.
+- **Triage Flagging**: Bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are bound to the timeline of the dataset they were captured in. You can toggle "Include all hosts and historical datasets" to view every flag simultaneously, and export them to a CSV for your incident report.
+- **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, sorting unique outliers to the top.
+- **Dataset Diff Mode (Single Host)**: Compare changes on a single machine between multiple timelines. Click "Diff Timelines" when viewing a host to select a Base and Target dataset. The dashboard computes the differences, highlighting new items in green (Added) and missing items in red (Removed).
 - **Temporal Datasets**: Each run creates a timestamped dataset folder (e.g., `Host-YYYY-MM-DD_HHMMZ`), allowing you to review and compare historical captures of the same system.
-- **Global Search**: Search instantly across all categories on a specific system or sweep across all collected systems globally (both latest datasets and all-time history).
-- **Raw Data Export**: Also exports standard CSV files for each artifact type per machine, ideal for ingestion into SIEMs or long-term archiving.
+- **Global Search**: Search across all categories on a specific system or sweep across all collected systems globally (both latest datasets and all-time history).
+- **Raw Data Export**: Exports standard CSV files for each artifact type per machine for ingestion into SIEMs or long-term archiving.
 
 ## Artifacts Collected
 
-For every targeted system, the script seamlessly maps cross-platform data:
+For every targeted system, the script maps cross-platform data:
 - **Running Processes**: Path, ID, Command Line, etc. (Windows via WMI, Linux via `ps`).
 - **Services**: Name, Status, Start Type (Windows via WMI, Linux via `systemctl/service`).
 - **Scheduled Tasks**: Task Name, Command, Next Run Time (Windows Tasks, Linux Crontabs).
@@ -26,7 +26,7 @@ For every targeted system, the script seamlessly maps cross-platform data:
 - **Startup Files**: Enumerates system and per-user Startup/autostart folders on both OSes.
 - **Execution Evidence**: Top 200 Windows Prefetch files, PSReadLine PowerShell History, Linux `sudo` executions, and Linux bash history. Features a built-in Javascript parser to directly import Eric Zimmerman `PECmd` CSV exports!
 - **Installed Software**: Name, Version, Publisher, Install Date (Windows via Registry, Linux via dpkg/rpm/snap).
-- **Firewall Rules**: Rich technical properties including local/remote IPs, Ports, Programs, Action and Direction (Windows via netsh, Linux via ufw/firewalld/iptables).
+- **Firewall Rules**: Technical properties including local/remote IPs, Ports, Programs, Action and Direction (Windows via netsh, Linux via ufw/firewalld/iptables).
 - **RDP Connections**: Aggregates Inbound RDP (Event Logs 21, 24, 25) and Outbound RDP (Event Log 1024, Terminal Server Client Registry) providing Source/Destination IP mapping.
 - **Event Logs (Windows Core Logs)**:
   - `4103`: PowerShell Module Logging
@@ -86,59 +86,64 @@ Use the `-OS Linux` flag and provide the SSH username. If you aren't using SSH k
 *(Note: Because of the security architecture of the native Windows SSH client, you must run this interactively in your console if a password is required. For bulk collections, SSH keys are highly recommended to prevent constant password prompting.)*
 
 ### 4. Build Dashboard from Existing Files
-If you have a folder full of `*-DFIR_Data.json` files collected previously (or provided by another analyst), you can instantly compile them into a unified dashboard without re-running any data collection against remote endpoints.
+If you have a folder full of `*-DFIR_Data.json` files collected previously (or provided by another analyst), you can compile them into a unified dashboard without re-running any data collection against remote endpoints.
 ```powershell
 .\Invoke-DFIRCollection.ps1 -BuildDashboardOnly
 ```
 
 ## Viewing the Results
 
-Every time you run a collection, the data is intelligently appended into your dashboard without overwriting previous hosts. Collections on the same host append a new timestamped dataset.
+Every time you run a collection, the data is appended into your dashboard without overwriting previous hosts. Collections on the same host append a new timestamped dataset.
 
-1. Navigate to the `FlashForensics_Output` folder.
-2. Double-click **`index.html`** to open it in your default web browser.
-3. Select any Windows or Linux dataset from the left sidebar to view its artifacts. The sidebar can be collapsed via the `☰` icon to maximize table space.
+1. Double-click **`index.html`** in the root directory to open it in your default web browser.
+2. Select any Windows or Linux dataset from the left sidebar to view its artifacts. The sidebar can be collapsed via the `☰` icon to maximize table space.
 
 ### Timeline Diffing (Historical Comparison)
 If you run the collection script on the same system multiple times, the dashboard automatically stacks your datasets. You can compare changes over time using the built-in diff engine:
 1. Select a host that has multiple historical datasets.
 2. Click the **Diff Timelines** button that appears in the top navigation bar.
 3. Select a **Base** (older) dataset and a **Target** (newer) dataset.
-4. The dashboard will automatically compare the two datasets and inject a **Diff** column into the tables. This allows you to instantly see which artifacts were `+ Added`, `- Removed`, or `Unchanged`. You can also filter directly on these statuses using the column dropdown!
+4. The dashboard will automatically compare the two datasets and inject a **Diff** column into the tables. This allows you to see which artifacts were `+ Added`, `- Removed`, or `Unchanged`. You can also filter directly on these statuses using the column dropdown!
 
 ## Directory Structure
 
 ```text
-📁 FlashForensics_Output\
+📁 flash-forensics-scripts\
  ├── 📄 index.html             (The interactive dashboard)
  ├── 📄 data.js                (The JSON payload containing all system data)
- └── 📁 <ComputerName>-<YYYY-MM-DD_HHMMZ>\  (Timestamped folder for each scanned system)
-     ├── 📄 <ComputerName>-Processes.csv
-     ├── 📄 <ComputerName>-Services.csv
-     ├── 📄 <ComputerName>-ScheduledTasks.csv
-     ├── 📄 <ComputerName>-NetworkConnections.csv
-     ├── 📄 <ComputerName>-LocalUsers.csv
-     ├── 📄 <ComputerName>-SystemPersistence.csv
-     ├── 📄 <ComputerName>-StartupFiles.csv
-     └── 📄 <ComputerName>-EventLogs.csv
+ ├── 📄 Invoke-DFIRCollection.ps1
+ ├── 📄 Architecture.md        (Technical Deep Dive)
+ ├── 📁 collection-scripts\    (Payloads deployed to endpoints)
+ ├── 📁 playbook\              (Documentation and playbooks)
+ └── 📁 FlashForensics_Output\ 
+     └── 📁 <ComputerName>-<YYYY-MM-DD_HHMMZ>\  (Timestamped folder for each scanned system)
+         ├── 📄 <ComputerName>-DFIR_Data.json
+         ├── 📄 <ComputerName>-Processes.csv
+         ├── 📄 <ComputerName>-Services.csv
+         ├── 📄 <ComputerName>-ScheduledTasks.csv
+         ├── 📄 <ComputerName>-NetworkConnections.csv
+         ├── 📄 <ComputerName>-LocalUsers.csv
+         ├── 📄 <ComputerName>-SystemPersistence.csv
+         ├── 📄 <ComputerName>-StartupFiles.csv
+         └── 📄 <ComputerName>-EventLogs.csv
 ```
 
 ## Dashboard Data Grouping
 
-Several tabs in the dashboard intelligently merge data from multiple sources. For example:
+Several tabs in the dashboard merge data from multiple sources. For example:
 - **Execution Evidence** groups artifacts by *Source* (e.g., Windows Prefetch, PowerShell History, Linux Bash History). 
 - **Users** groups accounts into *Local Users* and *Privileged Access*.
 - **System Persistence** groups by artifacts like *Registry Run Keys* or *BITS Transfers*.
-- **Event Logs** groups natively by *Event ID* and dynamically injects descriptive names (e.g., Successful Logon, Process Creation) directly into the section headers.
+- **Event Logs** groups natively by *Event ID* and injects descriptive names (e.g., Successful Logon, Process Creation) directly into the section headers.
 
-Each data source is presented in its own distinct, collapsible section. You can simply click on the section header to cleanly expand or collapse that specific dataset.
+Each data source is presented in its own distinct, collapsible section. You can click on the section header to expand or collapse that specific dataset.
 
 ## Global Search & Advanced Filtering
 
-The dashboard features a robust query engine that supports logical operators across both Global Search and Column Filters.
+The dashboard features a query engine that supports logical operators across both Global Search and Column Filters.
 
 ### Supported Operators
-You can build complex, multi-layered queries by combining terms with operators:
+You can build complex queries by combining terms with operators:
 - **AND / Space**: Requires both terms to be present (e.g., `svchost AND system`, `svchost & system`, or `svchost system`).
 - **OR**: Requires at least one term to be present (e.g., `chrome OR firefox`, `chrome, firefox`).
 - **NOT**: Excludes rows containing the term (e.g., `svchost AND NOT local`, `svchost & !local`).
