@@ -232,6 +232,56 @@ foreach ($Result in $Results) {
     if ($Result.EventLogs) {
         $Result.EventLogs | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-EventLogs.csv") -NoTypeInformation
     }
+
+    # --- ANALYST COLLECTION LOG GENERATION ---
+    $LogDateStr = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+    $LogTimeStr = (Get-Date).ToUniversalTime().ToString("HH:mm:ss\Z")
+    $LogFilePath = Join-Path -Path $OutputDirectory -ChildPath "Analyst_Collection_Log_$LogDateStr.csv"
+    
+    $IPAddress = "Unknown"
+    $IPInfo = $Result.SystemInfo | Where-Object { $_.Property -eq "IP Addresses (IPv4)" }
+    if ($IPInfo) { $IPAddress = $IPInfo.Value }
+    
+    $CollectionMethod = "Unknown"
+    if ($OS -eq "Linux") {
+        $CollectionMethod = "Remote SSH"
+    } elseif ($TargetName -eq "localhost" -or $TargetName -eq $env:COMPUTERNAME) {
+        $CollectionMethod = "Local PowerShell"
+    } else {
+        $CollectionMethod = "Remote WinRM"
+    }
+
+    $LogEntries = @()
+    
+    $AddLog = {
+        param([string]$Category, [int]$Count, [string]$WinMethod, [string]$LinMethod)
+        $MethodInfo = if ($OS -eq "Linux") { $LinMethod } else { $WinMethod }
+        [PSCustomObject]@{
+            Date = $LogDateStr
+            'Time (UTC)' = $LogTimeStr
+            Hostname = $TargetName
+            'IP Address' = $IPAddress
+            'Collection Method' = $CollectionMethod
+            Details = "Successfully collected $Count $Category via $MethodInfo"
+        }
+    }
+    
+    $LogEntries += $AddLog.Invoke("Processes", @($Result.Processes).Count, "Win32_Process CIM Instance", "ps cmd")
+    $LogEntries += $AddLog.Invoke("Services", @($Result.Services).Count, "Win32_Service CIM Instance", "systemctl")
+    $LogEntries += $AddLog.Invoke("Scheduled Tasks", @($Result.ScheduledTasks).Count, "Get-ScheduledTask", "crontab")
+    $LogEntries += $AddLog.Invoke("Network Connections", @($Result.NetworkConnections).Count, "Get-NetTCPConnection", "ss/netstat")
+    $LogEntries += $AddLog.Invoke("Local Users", @($Result.LocalUsers).Count, "Get-LocalUser", "/etc/passwd")
+    $LogEntries += $AddLog.Invoke("System Persistence", @($Result.SystemPersistence).Count, "Registry Parsing", "rc/bashrc/ssh configs")
+    $LogEntries += $AddLog.Invoke("Startup Files", @($Result.StartupFiles).Count, "File System Enumeration", "File System Enumeration")
+    $LogEntries += $AddLog.Invoke("Event Logs", @($Result.EventLogs).Count, "Get-WinEvent (High Value Filtering)", "N/A")
+    $LogEntries += $AddLog.Invoke("Execution Evidence", @($Result.ExecutionEvidence).Count, "Prefetch and PSHistory", "Bash History and Sudo logs")
+    $LogEntries += $AddLog.Invoke("Privileged Access", @($Result.PrivilegedAccess).Count, "Get-LocalGroupMember", "N/A")
+    $LogEntries += $AddLog.Invoke("USB History", @($Result.USBHistory).Count, "Registry Enum (USBSTOR)", "N/A")
+    $LogEntries += $AddLog.Invoke("Installed Software", @($Result.InstalledSoftware).Count, "Registry Uninstall Keys", "dpkg/rpm/snap")
+    $LogEntries += $AddLog.Invoke("Firewall Rules", @($Result.FirewallRules).Count, "netsh advfirewall", "ufw/iptables")
+    $LogEntries += $AddLog.Invoke("RDP Connections", @($Result.RDPConnections).Count, "Event Logs 21-24-25-1024 and Registry", "N/A")
+    
+    $LogEntries | Export-Csv -Path $LogFilePath -NoTypeInformation -Append
 }
 }
 
