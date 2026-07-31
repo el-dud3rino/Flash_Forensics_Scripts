@@ -30,6 +30,9 @@ param (
     [string]$SSHUsername = "",
 
     [Parameter(Mandatory=$false)]
+    [string]$SSHKeyPath = "",
+
+    [Parameter(Mandatory=$false)]
     [pscredential]$Credential,
 
     [Parameter(Mandatory=$false)]
@@ -95,6 +98,20 @@ if ($BuildDashboardOnly) {
         Write-Error "Could not find payload script at $PayloadScript. Please ensure Get-DFIRSystemData.ps1 is in the collection-scripts directory."
         exit
     }
+    
+    $DataJsPath = Join-Path -Path $PSScriptRoot -ChildPath "data.js"
+    $DataJsContent = ""
+    if (Test-Path $DataJsPath) {
+        $DataJsContent = Get-Content $DataJsPath -Raw
+    }
+    $EventDaysMap = @{}
+    foreach ($Comp in $ComputerName) {
+        if ($DataJsContent -match "`"ComputerName`":`"$Comp`"" -or $DataJsContent -match "`"PSComputerName`":`"$Comp`"") {
+            $EventDaysMap[$Comp] = 2
+        } else {
+            $EventDaysMap[$Comp] = 5
+        }
+    }
 
     if ($PromptCredential) {
         $Credential = Get-Credential
@@ -105,7 +122,7 @@ if ($BuildDashboardOnly) {
     foreach ($Comp in $ComputerName) {
         if ($Comp -eq "localhost" -or $Comp -eq "127.0.0.1" -or $Comp -eq $env:COMPUTERNAME -or $Comp -eq '.') {
             Write-Output "Starting local DFIR collection on $($env:COMPUTERNAME)..."
-            $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes
+            $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes -CollectionDays 5 -EventDaysMap $EventDaysMap
             if ($LocalResult) {
                 $LocalResult | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $env:COMPUTERNAME -Force
                 $Results += $LocalResult
@@ -119,7 +136,7 @@ if ($BuildDashboardOnly) {
         $InvokeParams = @{
             ComputerName = $RemoteComputers
             FilePath = $PayloadScript
-            ArgumentList = (, $AdditionalEventCodes)
+            ArgumentList = @($AdditionalEventCodes, 5, $EventDaysMap)
             ErrorAction = 'SilentlyContinue'
             ErrorVariable = 'InvokeErrors'
         }
@@ -153,33 +170,88 @@ if ($BuildDashboardOnly) {
         Write-Error "Could not find payload script at $PayloadScript"
         exit
     }
-    
-    if (-not $SSHUsername) {
-        Write-Error "SSHUsername is required when OS is Linux"
-        exit
+    $SshArgs = @("-o", "StrictHostKeyChecking=no", "-l", $SSHUsername)
+    if ($SSHKeyPath -and (Test-Path $SSHKeyPath)) {
+        $SshArgs += "-i"
+        $SshArgs += $SSHKeyPath
     }
 
-    Write-Output "If you are not using SSH keys, you will be prompted for passwords."
-    foreach ($Comp in $ComputerName) {
-        Write-Output "Starting Linux DFIR collection on $Comp via SSH..."
-        $JsonOutput = Get-Content $PayloadScript -Raw | ssh.exe -o StrictHostKeyChecking=no -l $SSHUsername $Comp "python3 -"
-        
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "SSH connection to $Comp failed (Exit Code: $LASTEXITCODE). Ensure SSH is running, credentials/keys are valid, and Python3 is installed."
-            continue
+    if ($SSHKeyPath -and (Test-Path $SSHKeyPath) -and $ComputerName.Count -gt 1) {
+        Write-Output "SSH Key provided. Running concurrent Linux collection via Background Jobs..."
+        $Jobs = @()
+        $PayloadContent = Get-Content $PayloadScript -Raw
+        foreach ($Comp in $ComputerName) {
+            $ScriptBlock = {
+                param($Comp, $PayloadContent, $SshArgsArray)
+                $ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+                $ProcessInfo.FileName = "ssh.exe"
+                $ProcessInfo.Arguments = ($SshArgsArray + @($Comp, "python3 -")) -join " "
+                $ProcessInfo.RedirectStandardInput = $true
+                $ProcessInfo.RedirectStandardOutput = $true
+                $ProcessInfo.RedirectStandardError = $true
+                $ProcessInfo.UseShellExecute = $false
+                $ProcessInfo.CreateNoWindow = $true
+                
+                $Process = New-Object System.Diagnostics.Process
+                $Process.StartInfo = $ProcessInfo
+                $Process.Start() | Out-Null
+                
+                $Process.StandardInput.Write($PayloadContent)
+                $Process.StandardInput.Close()
+                
+                $JsonOutput = $Process.StandardOutput.ReadToEnd()
+                $ErrorOutput = $Process.StandardError.ReadToEnd()
+                $Process.WaitForExit()
+                
+                return @{ Comp = $Comp; Output = $JsonOutput; ExitCode = $Process.ExitCode; Error = $ErrorOutput }
+            }
+            $Jobs += Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Comp, $PayloadContent, (,$SshArgs)
         }
         
-        if ([string]::IsNullOrWhiteSpace($JsonOutput)) {
-            Write-Warning "No output from $Comp. Script execution may have failed."
-            continue
+        $CompletedJobs = $Jobs | Wait-Job
+        foreach ($Job in $CompletedJobs) {
+            $Result = Receive-Job -Job $Job
+            $Comp = $Result.Comp
+            if ($Result.ExitCode -ne 0) {
+                Write-Warning "SSH connection to $Comp failed (Exit Code: $($Result.ExitCode)). Error: $($Result.Error)"
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($Result.Output)) {
+                Write-Warning "No output from $Comp. Script execution may have failed."
+                continue
+            }
+            try {
+                $LinuxData = $Result.Output | ConvertFrom-Json
+                $LinuxData | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $Comp -Force
+                $Results += $LinuxData
+            } catch {
+                Write-Warning "Failed to parse JSON output from $Comp."
+            }
         }
-        try {
-            $LinuxData = $JsonOutput | ConvertFrom-Json
-            # Add PSComputerName for consistency
-            $LinuxData | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $Comp -Force
-            $Results += $LinuxData
-        } catch {
-            Write-Warning "Failed to parse JSON output from $Comp."
+        $Jobs | Remove-Job
+    } else {
+        Write-Output "If you are not using SSH keys, you will be prompted for passwords."
+        foreach ($Comp in $ComputerName) {
+            Write-Output "Starting Linux DFIR collection on $Comp via SSH..."
+            
+            $JsonOutput = Get-Content $PayloadScript -Raw | ssh.exe @SshArgs $Comp "python3 -"
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "SSH connection to $Comp failed (Exit Code: $LASTEXITCODE). Ensure SSH is running, credentials/keys are valid, and Python3 is installed."
+                continue
+            }
+            
+            if ([string]::IsNullOrWhiteSpace($JsonOutput)) {
+                Write-Warning "No output from $Comp. Script execution may have failed."
+                continue
+            }
+            try {
+                $LinuxData = $JsonOutput | ConvertFrom-Json
+                $LinuxData | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $Comp -Force
+                $Results += $LinuxData
+            } catch {
+                Write-Warning "Failed to parse JSON output from $Comp."
+            }
         }
     }
 }
@@ -287,48 +359,37 @@ foreach ($Result in $Results) {
 
 Write-Output "Generating HTML Dashboard..."
 
-# Export all results to data.js for HTML dashboard
+Write-Output "Updating HTML Dashboard (data.js)..."
+
 $DataJsPath = Join-Path -Path $PSScriptRoot -ChildPath "data.js"
-$ExistingData = New-Object System.Collections.ArrayList
 
-if (Test-Path $DataJsPath) {
-    $FileContent = Get-Content $DataJsPath -Raw
-    $JsonString = $FileContent -replace '^const dfirData = ', '' -replace ';\s*$', ''
-    # PowerShell 7's ConvertFrom-Json fails if an object has duplicate case-insensitive keys (like {"value": 1, "Value": "One"}).
-    # This happens due to PowerShell 5.1's Enum serialization. We sanitize it here before parsing to recover historical datasets.
-    $JsonString = $JsonString -creplace '"value"\s*:', '"value_enum":'
-    try {
-        $Parsed = $JsonString | ConvertFrom-Json
-        if ($Parsed) {
-            foreach ($item in @($Parsed)) {
-                $ExistingData.Add($item) | Out-Null
+if ($BuildDashboardOnly) {
+    # Full rebuild if building dashboard only
+    $CombinedJson = ConvertTo-Json -InputObject @($Results) -Depth 10 -Compress
+    "const dfirData = $CombinedJson;" | Out-File -FilePath $DataJsPath -Encoding UTF8
+} else {
+    # O(1) String Append for speed on large datasets
+    $NewJson = ConvertTo-Json -InputObject @($Results) -Depth 10 -Compress
+    $NewJsonTrimmed = $NewJson.Trim() -replace '^\[', '' -replace '\]$', ''
+    
+    if (-not [string]::IsNullOrWhiteSpace($NewJsonTrimmed)) {
+        if (Test-Path $DataJsPath) {
+            $FileContent = Get-Content $DataJsPath -Raw
+            if ($FileContent -match '(?s)^const dfirData = \[(.*)\];?\s*$') {
+                $ExistingContent = $matches[1]
+                if ([string]::IsNullOrWhiteSpace($ExistingContent)) {
+                    "const dfirData = [$NewJsonTrimmed];" | Out-File -FilePath $DataJsPath -Encoding UTF8
+                } else {
+                    "const dfirData = [$ExistingContent,$NewJsonTrimmed];" | Out-File -FilePath $DataJsPath -Encoding UTF8
+                }
+            } else {
+                "const dfirData = [$NewJsonTrimmed];" | Out-File -FilePath $DataJsPath -Encoding UTF8
             }
-        }
-    } catch {
-        Write-Warning "Failed to parse existing data.js. Overwriting with new data. $_"
-    }
-}
-
-foreach ($Res in $Results) {
-    $SysName = if ($Res.ComputerName) { $Res.ComputerName } else { $Res.PSComputerName }
-    $ExistingIndex = -1
-    for ($i = 0; $i -lt $ExistingData.Count; $i++) {
-        $checkName = if ($ExistingData[$i].ComputerName) { $ExistingData[$i].ComputerName } else { $ExistingData[$i].PSComputerName }
-        $checkTime = $ExistingData[$i].Timestamp
-        if ($checkName -eq $SysName -and $checkTime -eq $Res.Timestamp) {
-            $ExistingIndex = $i
-            break
+        } else {
+            "const dfirData = [$NewJsonTrimmed];" | Out-File -FilePath $DataJsPath -Encoding UTF8
         }
     }
-    if ($ExistingIndex -ge 0) {
-        $ExistingData[$ExistingIndex] = $Res
-    } else {
-        $ExistingData.Add($Res) | Out-Null
-    }
 }
-
-$CombinedJson = ConvertTo-Json -InputObject @($ExistingData) -Depth 10 -Compress
-"const dfirData = $CombinedJson;" | Out-File -FilePath $DataJsPath -Encoding UTF8
 
 # Read Playbooks
 $HostPlaybookPath = Join-Path -Path $PSScriptRoot -ChildPath "playbook\Host_Analyst_Playbook.md"
@@ -472,13 +533,14 @@ $HtmlContent = @'
             overflow-x: auto;
         }
         .tab {
-            padding: 10px 15px;
+            padding: 6px 10px;
             cursor: pointer;
             color: var(--text-muted);
             font-weight: 600;
             border-bottom: 2px solid transparent;
             transition: all 0.2s;
             white-space: nowrap;
+            font-size: 0.82rem;
         }
         .tab:hover { color: var(--text-main); }
         .tab.active {
@@ -511,6 +573,7 @@ $HtmlContent = @'
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
         /* Table */
         .table-container {
@@ -769,20 +832,24 @@ $HtmlContent = @'
             </div>
         </div>
         <div class="tabs" id="tabs">
-            <div class="tab" data-tab="SystemInfo" onclick="switchTab('SystemInfo')">Sys Info</div>
+            <div class="tab" data-tab="SystemInfo" onclick="switchTab('SystemInfo')">System Info</div>
             <div class="tab" data-tab="Processes" onclick="switchTab('Processes')">Processes</div>
             <div class="tab" data-tab="Services" onclick="switchTab('Services')">Services</div>
             <div class="tab" data-tab="ScheduledTasks" onclick="switchTab('ScheduledTasks')">Tasks</div>
-            <div class="tab" data-tab="NetworkConnections" onclick="switchTab('NetworkConnections')">Net Conns</div>
+            <div class="tab" data-tab="NetworkConnections" onclick="switchTab('NetworkConnections')">Network</div>
             <div class="tab" data-tab="Users" onclick="switchTab('Users')">Users</div>
             <div class="tab" data-tab="SystemPersistence" onclick="switchTab('SystemPersistence')">Persistence</div>
             <div class="tab" data-tab="StartupFiles" onclick="switchTab('StartupFiles')">Startup</div>
-            <div class="tab" data-tab="ExecutionEvidence" onclick="switchTab('ExecutionEvidence')">Exec Evidence</div>
+            <div class="tab" data-tab="ExecutionEvidence" onclick="switchTab('ExecutionEvidence')">Execution</div>
             <div class="tab" data-tab="EventLogs" onclick="switchTab('EventLogs')">Event Logs</div>
             <div class="tab" data-tab="InstalledSoftware" onclick="switchTab('InstalledSoftware')">Software</div>
             <div class="tab" data-tab="FirewallRules" onclick="switchTab('FirewallRules')">Firewall</div>
             <div class="tab" data-tab="RDPConnections" onclick="switchTab('RDPConnections')">RDP</div>
-            <div class="tab" data-tab="ProcessTree" style="background: var(--accent); color: white;" onclick="switchTab('ProcessTree')">Proc Tree</div>
+            <div class="tab" data-tab="DNSCache" onclick="switchTab('DNSCache')">DNS</div>
+            <div class="tab" data-tab="SMBSessions" onclick="switchTab('SMBSessions')">SMB</div>
+            <div class="tab" data-tab="LoggedinUsers" onclick="switchTab('LoggedinUsers')">Logged In</div>
+            <div class="tab" data-tab="DockerContainers" onclick="switchTab('DockerContainers')">Docker</div>
+            <div class="tab" data-tab="ProcessTree" style="background: var(--accent); color: white;" onclick="switchTab('ProcessTree')">Process Tree</div>
             <div class="tab" data-tab="Timeline" style="background: var(--accent); color: white;" onclick="switchTab('Timeline')">Timeline</div>
             <div class="tab" data-tab="FlaggedItems" onclick="switchTab('FlaggedItems')" style="color: var(--danger); font-weight: bold;">&#128681; Flagged</div>
             <div class="tab" data-tab="SearchResults" id="tabSearchResults" style="display: none;" onclick="switchTab('SearchResults')">Search Results</div>
@@ -808,6 +875,16 @@ $HtmlContent = @'
         
         function closeCellModal(e) {
             document.getElementById('cellModalOverlay').style.display = 'none';
+        }
+
+        function copyToClipboard(btn, e) {
+            if (e) e.stopPropagation();
+            const content = btn.previousElementSibling.innerText || btn.previousElementSibling.textContent;
+            navigator.clipboard.writeText(content).then(() => {
+                const oldColor = btn.style.color;
+                btn.style.color = 'var(--accent)';
+                setTimeout(() => { btn.style.color = oldColor; }, 1000);
+            });
         }
 
         function toggleSidebar() {
@@ -1245,7 +1322,7 @@ $HtmlContent = @'
             
             if (!systemsToSearch[0]) return;
             
-            const categories = ['SystemInfo', 'Processes', 'Services', 'ScheduledTasks', 'NetworkConnections', 'LocalUsers', 'SystemPersistence', 'PrivilegedAccess', 'StartupFiles', 'ExecutionEvidence', 'EventLogs'];
+            const categories = ['SystemInfo', 'Processes', 'Services', 'ScheduledTasks', 'NetworkConnections', 'LocalUsers', 'SystemPersistence', 'PrivilegedAccess', 'StartupFiles', 'ExecutionEvidence', 'EventLogs', 'InstalledSoftware', 'FirewallRules', 'RDPConnections', 'DNSCache', 'SMBSessions', 'LoggedinUsers', 'DockerContainers'];
             
             systemsToSearch.forEach((sys, idx) => {
                 const sysBaseName = sys.ComputerName || sys.PSComputerName || `Unknown-${idx}`;
@@ -1351,17 +1428,24 @@ $HtmlContent = @'
                 }
             });
             
-            if (document.getElementById('searchInput').value) {
-                renderSearchResults();
-            } else if (tabId === 'Timeline') {
-                renderTimeline();
-            } else if (tabId === 'ProcessTree') {
-                renderProcessTree();
-            } else if (tabId === 'FlaggedItems') {
-                renderFlaggedItems();
-            } else {
-                renderTable(tabId);
+            const container = document.getElementById('tableContainer');
+            if (container) {
+                container.innerHTML = '<div class="empty-state"><div style="margin: 0 auto 15px auto; width:40px; height:40px; border:4px solid var(--glass-border); border-top:4px solid var(--accent); border-radius:50%; animation:spin 1s linear infinite;"></div>Loading...</div>';
             }
+            
+            setTimeout(() => {
+                if (document.getElementById('searchInput').value) {
+                    renderSearchResults();
+                } else if (tabId === 'Timeline') {
+                    renderTimeline();
+                } else if (tabId === 'ProcessTree') {
+                    renderProcessTree();
+                } else if (tabId === 'FlaggedItems') {
+                    renderFlaggedItems();
+                } else {
+                    renderTable(tabId);
+                }
+            }, 50);
         }
         
         function escapeHtml(unsafe) {
@@ -1637,12 +1721,22 @@ $HtmlContent = @'
                     }
                     if (kIdx === 0) {
                         html += `<td>
-                                   <span style="cursor:pointer; color:var(--accent); font-weight:bold; margin-right:10px; font-family:monospace;" 
-                                         onclick="const e=document.getElementById('${trId}-exp'); e.style.display=e.style.display==='none'?'table-row':'none'; this.innerText=e.style.display==='none'?'[+]':'[-]';">${isHighlighted ? '[-]' : '[+]'}</span>
-                                   <div class="td-content" style="display:inline-block; vertical-align:top;">${escapeHtml(val)}</div>
+                                   <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                       <div>
+                                           <span style="cursor:pointer; color:var(--accent); font-weight:bold; margin-right:10px; font-family:monospace;" 
+                                                 onclick="const e=document.getElementById('${trId}-exp'); e.style.display=e.style.display==='none'?'table-row':'none'; this.innerText=e.style.display==='none'?'[+]':'[-]'; event.stopPropagation();">${isHighlighted ? '[-]' : '[+]'}</span>
+                                           <div class="td-content" style="display:inline-block; vertical-align:top;">${escapeHtml(val)}</div>
+                                       </div>
+                                       <button onclick="copyToClipboard(this, event)" style="background:none; border:none; color:var(--text-muted); cursor:pointer; margin-left:5px; font-size:1.1rem; opacity:0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Copy cell contents">&#128203;</button>
+                                   </div>
                                  </td>`;
                     } else {
-                        html += `<td><div class="td-content">${escapeHtml(val)}</div></td>`;
+                        html += `<td>
+                                   <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                       <div class="td-content">${escapeHtml(val)}</div>
+                                       <button onclick="copyToClipboard(this, event)" style="background:none; border:none; color:var(--text-muted); cursor:pointer; margin-left:5px; font-size:1.1rem; opacity:0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" title="Copy cell contents">&#128203;</button>
+                                   </div>
+                                 </td>`;
                     }
                 });
                 html += '</tr>';

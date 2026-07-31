@@ -11,13 +11,17 @@ Flash Forensics operates on a hub-and-spoke model where a central **Orchestrator
 1. **Orchestrator**: Executes locally on the analyst's machine. Manages concurrency, remote connections (`WinRM` / `OpenSSH`), and payload injection.
 2. **Payloads**: Dedicated, standalone scripts (`Get-DFIRSystemData.ps1` and `Get-LinuxDFIRSystemData.py`) that perform the actual OS-level API calls and binary executions.
 3. **Data Return**: Data is serialized as JSON (`ConvertTo-Json -Depth 5` or `json.dumps()`), returned via remote runspace output streams or `stdout`, and saved to disk.
-4. **Compilation**: The orchestrator iterates through the `FlashForensics_Output` folder, parsing all historical `*-DFIR_Data.json` files and injecting them into a localized `data.js` payload. This file acts as the database for the standalone `index.html` Single-Page Application (SPA).
+4. **Compilation & Storage**: The orchestrator writes the standalone JSON payload to `FlashForensics_Output`. Simultaneously, it implements an **O(1) String Concatenation** regex algorithm to directly append the raw JSON payload into a localized `data.js` database. This eliminates O(n) disk I/O parsing and maintains a persistent standalone `index.html` Single-Page Application (SPA).
+5. **Analyst Collection Log**: Maintains a daily CSV (`Analyst_Collection_Log_YYYY-MM-DD.csv`) mapping hostnames, OS, and statuses.
 
 ---
 
 ## 2. Windows Data Collection Engine
 
-The orchestrator leverages PowerShell Remoting (`Invoke-Command`) to pass the script block of `Get-DFIRSystemData.ps1` to the target. It executes entirely in memory within the `wsmprovhost.exe` (WinRM Provider Host) process.
+The orchestrator leverages PowerShell Remoting (`Invoke-Command`) to pass the script block of `Get-DFIRSystemData.ps1` to the target. It executes entirely in memory within the `wsmprovhost.exe` (WinRM Provider Host) process. Execution is handled via **Parallel Background Jobs** (`Start-Job`), allowing asynchronous data collection across hundreds of nodes simultaneously.
+
+### Dynamic Collection Windows
+The orchestrator parses the existing `data.js` payload to identify previously scanned hosts. It implements a smart temporal filter, requesting **5 days** of historical data (Event Logs, Prefetch, PS History) for new hosts, and only **2 days** for repeat hosts, drastically improving collection speed.
 
 ### Explicit Collection Mechanisms
 *   **System Information**: Uses WMI/CIM classes: `Get-CimInstance Win32_OperatingSystem` and `Win32_ComputerSystem`. IP addresses are pulled via `Get-NetIPAddress -AddressFamily IPv4`.
@@ -38,6 +42,10 @@ The orchestrator leverages PowerShell Remoting (`Invoke-Command`) to pass the sc
 *   **RDP Connections**:
     *   **Inbound**: Queries `Microsoft-Windows-TerminalServices-LocalSessionManager/Operational` (Event IDs `21`, `24`, `25`).
     *   **Outbound**: Queries `Microsoft-Windows-TerminalServices-RDPClient/Operational` (Event ID `1024`) and parses the `Terminal Server Client\Servers` registry key for all users.
+*   **DNS Cache**: Leverages `Get-DnsClientCache`. Implements a graceful fallback to raw text parsing of `ipconfig /displaydns` for older operating systems or constrained remote WinRM runspaces where the cmdlet fails.
+*   **SMB Sessions**: Leverages `Get-SmbSession`.
+*   **Active Logged In Users**: Bypasses the WMI abstraction layer and directly executes `quser.exe` (checking both `System32` and `sysnative` to support 32-bit remote runspaces), parsing the column output for Interactive/RDP sessions. If no interactive sessions exist (common on headless remote servers), it falls back to querying `Win32_ComputerSystem.UserName` to map the primary console user.
+*   **Docker Containers**: Checks for the existence of `docker` and runs `docker ps -a --format '{{json .}}'` to collect container state and port mappings.
 *   **Event Logs (High Value Filter)**: Uses `Get-WinEvent` targeting `Security`, `System`, and `PowerShell/Operational` logs. Explicitly extracts:
     *   `4103`, `4104`: PowerShell Script Block/Module Logging
     *   `4624`, `4625`: Logon Success / Failure
@@ -66,6 +74,9 @@ The Python payload relies heavily on executing native Linux binaries via `subpro
 *   **Execution Evidence**: Reads `.bash_history` for all users and parses `/var/log/auth.log` or `/var/log/secure` for `sudo` command executions.
 *   **Installed Software**: Uses `dpkg-query -W` (Debian/Ubuntu), `rpm -qa` (RHEL/CentOS), and `snap list`.
 *   **Firewall Rules**: Checks for `ufw status`, `firewall-cmd --list-all`, or dumps raw `iptables -S`.
+*   **DNS Configuration**: Reads and parses `/etc/resolv.conf`.
+*   **Active Logged In Users**: Executes `who 2>/dev/null` to identify active PTY/TTY and SSH sessions with remote host IPs.
+*   **Docker Containers**: Executes `docker ps -a --format '{{json .}}'` to map running images and network ports.
 
 ---
 

@@ -5,8 +5,11 @@ An agentless Digital Forensics and Incident Response (DFIR) collection tool buil
 ## Features
 
 - **Cross-Platform & Agentless**: Collects from Windows (via WinRM `Invoke-Command` or locally) and Linux (via native `ssh.exe` pipe), requiring zero agent installations.
+- **Concurrent Execution**: Deploys payloads across multiple systems in parallel utilizing PowerShell background jobs (`Start-Job`) for lightning fast collections.
 - **Fileless Linux Execution**: The Python payload (`Get-LinuxDFIRSystemData.py`) is piped directly into the remote Linux system's memory over SSH. No scripts are dropped to the disk of the target!
 - **Interactive HTML Dashboard**: Automatically generates an HTML dashboard (`index.html`) that works completely offline without a web server. Features a collapsible sidebar to maximize screen real-estate.
+- **Smart Temporal Filtering**: Automatically scales data collection windows (e.g., pulling 5 days of event logs/execution evidence for a new host, but only 2 days for previously scanned hosts) to drastically reduce collection time and duplicate data.
+- **Analyst Collection Log**: Automatically maintains a timestamped CSV log (`Analyst_Collection_Log_YYYY-MM-DD.csv`) mapping hostnames, OS types, execution duration, and statuses.
 - **Triage Flagging**: Bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions and are bound to the timeline of the dataset they were captured in. You can toggle "Include all hosts and historical datasets" to view every flag simultaneously, and export them to a CSV for your incident report.
 - **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, sorting unique outliers to the top.
 - **Dataset Diff Mode (Single Host)**: Compare changes on a single machine between multiple timelines. Click "Diff Timelines" when viewing a host to select a Base and Target dataset. The dashboard computes the differences, highlighting new items in green (Added) and missing items in red (Removed).
@@ -22,12 +25,16 @@ For every targeted system, the script maps cross-platform data:
 - **Scheduled Tasks**: Task Name, Command, Next Run Time (Windows Tasks, Linux Crontabs).
 - **Network Connections**: Local/Remote IP and Port, State (Windows via `NetTCPConnection`, Linux via `ss/netstat`).
 - **Local Users**: Username, Enabled Status, Home Dir (Windows SAM, Linux `/etc/passwd`).
+- **Active Logged In Users**: Current interactive, RDP, and SSH sessions (Windows via `quser`, Linux via `who`).
 - **System Persistence**: Evaluates `Run/RunOnce` keys, BITS jobs, and `BootExecute` on Windows. Evaluates bash profiles, `rc.local`, and `authorized_keys` on Linux. 
 - **Startup Files**: Enumerates system and per-user Startup/autostart folders on both OSes.
 - **Execution Evidence**: Top 200 Windows Prefetch files, PSReadLine PowerShell History, Linux `sudo` executions, and Linux bash history. Features a built-in Javascript parser to directly import Eric Zimmerman `PECmd` CSV exports!
 - **Installed Software**: Name, Version, Publisher, Install Date (Windows via Registry, Linux via dpkg/rpm/snap).
 - **Firewall Rules**: Technical properties including local/remote IPs, Ports, Programs, Action and Direction (Windows via netsh, Linux via ufw/firewalld/iptables).
 - **RDP Connections**: Aggregates Inbound RDP (Event Logs 21, 24, 25) and Outbound RDP (Event Log 1024, Terminal Server Client Registry) providing Source/Destination IP mapping.
+- **Docker Containers**: Running images, container state, and network port mappings (Windows and Linux).
+- **DNS Configuration & Cache**: Local DNS cache entries and resolver configurations.
+- **SMB Sessions**: Active inbound SMB network sessions (Windows).
 - **Event Logs (Windows Core Logs)**:
   - `4103`: PowerShell Module Logging
   - `4104`: PowerShell Script Block Logging

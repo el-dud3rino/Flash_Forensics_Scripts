@@ -36,7 +36,11 @@ results = {
     "ExecutionEvidence": [],
     "PrivilegedAccess": [],
     "InstalledSoftware": [],
-    "FirewallRules": []
+    "FirewallRules": [],
+    "LoggedinUsers": [],
+    "DockerContainers": [],
+    "DNSCache": [],
+    "SMBSessions": []
 }
 
 # 0. System Info
@@ -51,6 +55,35 @@ results["SystemInfo"].append({"Property": "Uptime", "Value": uptime_out})
 ips = run_cmd("ip -4 addr show | grep inet | awk '{print $2}'").replace('\n', ', ').strip(', ')
 if ips:
     results["SystemInfo"].append({"Property": "IP Addresses (IPv4)", "Value": ips})
+
+dns_conf = run_cmd("cat /etc/resolv.conf 2>/dev/null | grep -v '^#' | grep -v '^$'").strip()
+if dns_conf:
+    results["SystemInfo"].append({"Property": "DNS Configuration", "Value": dns_conf})
+
+w_out = run_cmd("w -h 2>/dev/null").strip()
+if w_out:
+    for line in w_out.split('\n'):
+        parts = line.split()
+        if len(parts) >= 3:
+            results["LoggedinUsers"].append({
+                "User": parts[0],
+                "TTY": parts[1],
+                "From": parts[2],
+                "Idle": parts[4] if len(parts) > 4 else "",
+                "Command": " ".join(parts[7:]) if len(parts) > 7 else ""
+            })
+
+docker_out = run_cmd("docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}' 2>/dev/null").strip()
+if docker_out:
+    for line in docker_out.split('\n'):
+        parts = line.split('|')
+        if len(parts) >= 3:
+            results["DockerContainers"].append({
+                "Name": parts[0],
+                "Image": parts[1],
+                "Status": parts[2],
+                "Ports": parts[3] if len(parts) > 3 else ""
+            })
 
 # 1. Processes
 ps_out = run_cmd("ps -eo pid,ppid,user,start_time,command")
@@ -411,6 +444,61 @@ try:
                             "Profile": "iptables",
                             "Details": line.strip()
                         })
+except:
+    pass
+
+try:
+    # 13. DNS Configuration
+    if os.path.exists("/etc/resolv.conf"):
+        with open("/etc/resolv.conf", "r") as f:
+            for line in f:
+                if not line.strip() or line.startswith("#"): continue
+                results["DNSCache"].append({
+                    "Entry": "Config",
+                    "Name": "/etc/resolv.conf",
+                    "Type": line.split()[0] if len(line.split()) > 0 else "",
+                    "Status": "File",
+                    "Data": line.strip(),
+                    "TimeToLive": ""
+                })
+except:
+    pass
+
+try:
+    # 14. Logged In Users
+    who_out = run_cmd("who 2>/dev/null")
+    if who_out:
+        for line in who_out.strip().split('\n'):
+            parts = line.split()
+            if len(parts) >= 4:
+                results["LoggedinUsers"].append({
+                    "User": parts[0],
+                    "Session": parts[1],
+                    "ID": line[line.find('(')+1:line.find(')')] if '(' in line else "-",
+                    "State": "Active",
+                    "IdleTime": "-",
+                    "LogonTime": f"{parts[2]} {parts[3]}"
+                })
+except:
+    pass
+
+try:
+    # 15. Docker Containers
+    docker_out = run_cmd("docker ps -a --format '{{json .}}' 2>/dev/null")
+    if docker_out:
+        for line in docker_out.strip().split('\n'):
+            try:
+                import json
+                d = json.loads(line)
+                results["DockerContainers"].append({
+                    "Name": d.get("Names", ""),
+                    "Image": d.get("Image", ""),
+                    "Status": d.get("Status", ""),
+                    "Ports": d.get("Ports", ""),
+                    "ID": d.get("ID", "")
+                })
+            except:
+                pass
 except:
     pass
 

@@ -1,7 +1,13 @@
 [CmdletBinding()]
 param(
-    [int[]]$AdditionalEventCodes = @()
+    [int[]]$AdditionalEventCodes = @(),
+    [int]$CollectionDays = 5,
+    [hashtable]$EventDaysMap = @{}
 )
+
+if ($EventDaysMap.ContainsKey($env:COMPUTERNAME)) {
+    $CollectionDays = $EventDaysMap[$env:COMPUTERNAME]
+}
 
 <#
 .SYNOPSIS
@@ -28,6 +34,10 @@ $Results = @{
     InstalledSoftware = @()
     FirewallRules = @()
     RDPConnections = @()
+    DNSCache = @()
+    SMBSessions = @()
+    LoggedinUsers = @()
+    DockerContainers = @()
     ComputerName = $env:COMPUTERNAME
     Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
@@ -43,6 +53,9 @@ try {
     $Results.SystemInfo += [PSCustomObject]@{ Property = "Uptime"; Value = "$($Uptime_Ts.Days) days, $($Uptime_Ts.Hours) hours, $($Uptime_Ts.Minutes) minutes" }
     $IPv4s = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object InterfaceAlias -notmatch "Loopback").IPAddress -join ", "
     if ($IPv4s) { $Results.SystemInfo += [PSCustomObject]@{ Property = "IP Addresses (IPv4)"; Value = $IPv4s } }
+
+    # Pre-fetch user directories for reuse
+    $GlobalUserDirs = Get-ChildItem -Path "C:\Users" -Directory -Force -ErrorAction SilentlyContinue
 
     # 1. Processes
     $Procs = Get-CimInstance Win32_Process
@@ -210,8 +223,7 @@ try {
     $RegPersist += Get-RegValuePersistence -KeyPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -ValueName "BootExecute"
 
     # Attempt to load unloaded NTUSER.DAT hives
-    $UserDirs = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue
-    foreach ($Dir in $UserDirs) {
+    foreach ($Dir in $GlobalUserDirs) {
         $NTUserPath = Join-Path $Dir.FullName "NTUSER.DAT"
         if (Test-Path $NTUserPath) {
             $TempKeyName = "TEMP_$($Dir.Name)"
@@ -251,12 +263,12 @@ try {
             "$env:windir\System32\WindowsPowerShell\v1.0\Microsoft.PowerShellISE_profile.ps1"
         )
         try {
-            Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                $ProfilePaths += "$($_.FullName)\Documents\WindowsPowerShell\profile.ps1"
-                $ProfilePaths += "$($_.FullName)\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
-                $ProfilePaths += "$($_.FullName)\Documents\WindowsPowerShell\Microsoft.PowerShellISE_profile.ps1"
-                $ProfilePaths += "$($_.FullName)\Documents\PowerShell\profile.ps1"
-                $ProfilePaths += "$($_.FullName)\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+            foreach ($Dir in $GlobalUserDirs) {
+                $ProfilePaths += "$($Dir.FullName)\Documents\WindowsPowerShell\profile.ps1"
+                $ProfilePaths += "$($Dir.FullName)\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+                $ProfilePaths += "$($Dir.FullName)\Documents\WindowsPowerShell\Microsoft.PowerShellISE_profile.ps1"
+                $ProfilePaths += "$($Dir.FullName)\Documents\PowerShell\profile.ps1"
+                $ProfilePaths += "$($Dir.FullName)\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
             }
         } catch {}
 
@@ -273,6 +285,18 @@ try {
                 } catch {}
             }
         }
+
+    # WMI Persistence
+    try {
+        $Filters = Get-CimInstance -Namespace "root\subscription" -ClassName __EventFilter -ErrorAction SilentlyContinue
+        $Consumers = Get-CimInstance -Namespace "root\subscription" -ClassName CommandLineEventConsumer -ErrorAction SilentlyContinue
+        foreach ($Filter in $Filters) {
+            $RegPersist += [PSCustomObject]@{ Key="WMI EventFilter"; ValueName=$Filter.Name; Data=$Filter.Query; Source="WMI" }
+        }
+        foreach ($Consumer in $Consumers) {
+            $RegPersist += [PSCustomObject]@{ Key="WMI CommandLineEventConsumer"; ValueName=$Consumer.Name; Data="Exe: $($Consumer.ExecutablePath) | Cmd: $($Consumer.CommandLineTemplate)"; Source="WMI" }
+        }
+    } catch { }
 
     $Results.SystemPersistence = $RegPersist
 
@@ -338,7 +362,8 @@ try {
     if ($AdditionalEventCodes) {
         $TargetIds += $AdditionalEventCodes
     }
-    $Events = Get-WinEvent -FilterHashtable @{LogName='Security','System','Microsoft-Windows-PowerShell/Operational'; Id=$TargetIds} -MaxEvents 300 -ErrorAction SilentlyContinue
+    [DateTime]$Cutoff = (Get-Date).AddDays(-$CollectionDays)
+    $Events = Get-WinEvent -FilterHashtable @{LogName='Security','System','Microsoft-Windows-PowerShell/Operational'; Id=$TargetIds; StartTime=$Cutoff} -MaxEvents 500 -ErrorAction SilentlyContinue
     $ParsedEvents = @()
     foreach ($E in $Events) {
         $BaseProps = [ordered]@{
@@ -421,46 +446,51 @@ try {
 try {
     # 9. Execution Evidence (Prefetch)
     $Prefetch = @()
-    $PrefetchFiles = Get-ChildItem -Path "$env:windir\Prefetch\*.pf" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 200
+    $CutoffDate = (Get-Date).AddDays(-$CollectionDays)
+    $PrefetchFiles = Get-ChildItem -Path "$env:windir\Prefetch\*.pf" -ErrorAction SilentlyContinue
     foreach ($PF in $PrefetchFiles) {
-        $Prefetch += [PSCustomObject]@{
-            Executable = $PF.Name -replace "-[A-F0-9]+\.pf$",""
-            FileName = $PF.Name
-            CreationTime = $PF.CreationTime
-            LastWriteTime = $PF.LastWriteTime
-            Length = $PF.Length
-            RunCount = 1
-            Source = "Windows Prefetch"
+        if ($PF.LastWriteTime -ge $CutoffDate -or $PF.CreationTime -ge $CutoffDate) {
+            $Prefetch += [PSCustomObject]@{
+                Executable = $PF.Name -replace "-[A-F0-9]+\.pf$",""
+                FileName = $PF.Name
+                CreationTime = $PF.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                LastWriteTime = $PF.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                Length = $PF.Length
+                RunCount = 1
+                Source = "Windows Prefetch"
+            }
         }
     }
     $Results.ExecutionEvidence = $Prefetch
     
     # PowerShell History
-    $UserDirs = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue
-    foreach ($User in $UserDirs) {
+    foreach ($User in $GlobalUserDirs) {
         $HistPath = "$($User.FullName)\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
         if (Test-Path $HistPath) {
-            $HistTime = (Get-Item $HistPath).LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
-            try {
-                $Commands = Get-Content $HistPath -ErrorAction SilentlyContinue
-                if ($Commands) {
-                    $Commands = [array]$Commands
-                    [array]::Reverse($Commands)
-                    foreach ($Cmd in $Commands) {
-                        if (![string]::IsNullOrWhiteSpace($Cmd)) {
-                            $Results.ExecutionEvidence += [PSCustomObject]@{
-                                Executable = $Cmd.Trim()
-                                FileName = $HistPath
-                                CreationTime = $null
-                                LastWriteTime = $HistTime
-                                Length = $null
-                                RunCount = 1
-                                Source = "PowerShell History"
+            $HistInfo = Get-Item $HistPath
+            if ($HistInfo.LastWriteTime -ge $CutoffDate) {
+                $HistTime = $HistInfo.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                try {
+                    $Commands = Get-Content $HistPath -ErrorAction SilentlyContinue
+                    if ($Commands) {
+                        $Commands = [array]$Commands
+                        [array]::Reverse($Commands)
+                        foreach ($Cmd in $Commands) {
+                            if (![string]::IsNullOrWhiteSpace($Cmd)) {
+                                $Results.ExecutionEvidence += [PSCustomObject]@{
+                                    Executable = $Cmd.Trim()
+                                    FileName = $HistPath
+                                    CreationTime = $null
+                                    LastWriteTime = $HistTime
+                                    Length = $null
+                                    RunCount = 1
+                                    Source = "PowerShell History"
+                                }
                             }
                         }
                     }
-                }
-            } catch { }
+                } catch { }
+            }
         }
     }
 } catch {
@@ -573,9 +603,10 @@ try {
 try {
     # 14. RDP Connections
     $RDPData = @()
+    $StartTime = (Get-Date).AddDays(-$EventLogDays)
     
     # INBOUND RDP (LocalSessionManager)
-    $InboundEvents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; Id=21, 24, 25} -MaxEvents 50 -ErrorAction SilentlyContinue
+    $InboundEvents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; Id=21, 24, 25; StartTime=$StartTime} -MaxEvents 50 -ErrorAction SilentlyContinue
     foreach ($E in $InboundEvents) {
         $xml = [xml]$E.ToXml()
         $EventData = @{}
@@ -648,5 +679,120 @@ try {
 
     $Results.RDPConnections = $RDPData
 } catch { Write-Warning "Failed to collect RDP Connections: $_" }
+
+try {
+    # 15. DNS Cache
+    $DNS = @(Get-DnsClientCache -ErrorAction SilentlyContinue | Select-Object Entry, Name, Type, Status, Data, TimeToLive)
+    if (-not $DNS -or $DNS.Count -eq 0) {
+        $IpConfig = ipconfig /displaydns 2>$null
+        $CurrentName = ""
+        $DNS = @()
+        foreach ($line in $IpConfig) {
+            $line = $line.Trim()
+            if ($line -match "^Record Name\s+[\.\:]\s+(.+)$") {
+                $CurrentName = $matches[1]
+            } elseif ($line -match "^Record Type\s+[\.\:]\s+(.+)$" -and $CurrentName) {
+                $Type = $matches[1]
+            } elseif ($line -match "^Time To Live\s+[\.\:]\s+(.+)$" -and $CurrentName) {
+                $TTL = $matches[1]
+            } elseif ($line -match "^[A-Za-z]+ Record\s+[\.\:]\s+(.+)$" -and $CurrentName) {
+                $Data = $matches[1]
+                $DNS += [PSCustomObject]@{
+                    Entry = ""
+                    Name = $CurrentName
+                    Type = $Type
+                    Status = "Success"
+                    Data = $Data
+                    TimeToLive = $TTL
+                }
+                $CurrentName = ""
+            }
+        }
+    }
+    $Results.DNSCache = $DNS
+} catch { Write-Warning "Failed to collect DNS Cache: $_" }
+
+try {
+    # 16. Active SMB Sessions
+    $Results.SMBSessions = Get-SmbSession -ErrorAction SilentlyContinue | Select-Object ClientComputerName, ClientUserName, NumOpens, Dialect, SessionId, IdleTime
+} catch { Write-Warning "Failed to collect SMB Sessions: $_" }
+
+try {
+    # 17. Logged In Users (Interactive / RDP)
+    $Loggedin = @()
+    $QuserPath = "$env:windir\System32\quser.exe"
+    if (-not (Test-Path $QuserPath)) { $QuserPath = "$env:windir\sysnative\quser.exe" }
+    
+    if (Test-Path $QuserPath) {
+        $QuserOut = & $QuserPath 2>$null
+        if ($QuserOut) {
+        for ($i=1; $i -lt $QuserOut.Count; $i++) {
+            $line = $QuserOut[$i]
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $line = $line -replace '^>', ' ' # Replace active marker with space for consistent splitting
+            $parts = $line.Trim() -split '\s{2,}'
+            if ($parts.Count -ge 5) {
+                $Loggedin += [PSCustomObject]@{
+                    User = $parts[0]
+                    Session = $parts[1]
+                    ID = $parts[2]
+                    State = $parts[3]
+                    IdleTime = $parts[4]
+                    LogonTime = if ($parts.Count -ge 6) { $parts[5] } else { "" }
+                }
+            } elseif ($parts.Count -eq 4 -and $line.Trim() -match '^\S+\s+\d+\s+') {
+                # Disconnected sessions lack a SESSIONNAME, which shifts columns
+                $Loggedin += [PSCustomObject]@{
+                    User = $parts[0]
+                    Session = "none"
+                    ID = $parts[1]
+                    State = $parts[2]
+                    IdleTime = $parts[3]
+                    LogonTime = ""
+                }
+            }
+        }
+        }
+    }
+    
+    if (-not $Loggedin -or $Loggedin.Count -eq 0) {
+        $PrimaryUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+        if ($PrimaryUser) {
+            $Loggedin += [PSCustomObject]@{
+                User = $PrimaryUser
+                Session = "Console"
+                ID = "0"
+                State = "Active"
+                IdleTime = "Unknown"
+                LogonTime = "Unknown"
+            }
+        }
+    }
+    
+    $Results.LoggedinUsers = $Loggedin
+} catch { Write-Warning "Failed to collect Logged in Users: $_" }
+
+try {
+    # 18. Docker Containers
+    $DockerData = @()
+    $DockerExists = Get-Command docker -ErrorAction SilentlyContinue
+    if ($DockerExists) {
+        $DockerOut = docker ps -a --format '{{json .}}' 2>$null
+        foreach ($line in $DockerOut) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $DockerObj = $line | ConvertFrom-Json
+                $DockerData += [PSCustomObject]@{
+                    Name = $DockerObj.Names
+                    Image = $DockerObj.Image
+                    Status = $DockerObj.Status
+                    Ports = $DockerObj.Ports
+                    ID = $DockerObj.ID
+                }
+            } catch { }
+        }
+    }
+    $Results.DockerContainers = $DockerData
+} catch { Write-Warning "Failed to collect Docker Containers: $_" }
 
 return [PSCustomObject]$Results
