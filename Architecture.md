@@ -109,3 +109,13 @@ Users can flag rows for investigation using the 🚩 icon.
 2.  **Identification**: A unique composite string is generated: `Hostname|Timestamp|Tab|StringifiedRowData`.
 3.  **Persistence**: This string is pushed into the browser's native `localStorage.getItem('ff_flags')` array. This ensures the flags persist even if the browser is closed or the page is refreshed.
 4.  **Export Engine**: The "Export Flags" logic iterates through `localStorage`, parses the stringified data back into CSV format, generates a virtual Blob URL (`URL.createObjectURL(blob)`), and dynamically clicks a hidden anchor tag to trigger the browser download of `FFS_Flagged_Items.csv`.
+
+---
+
+## 5. Commands Executed (Reference)
+
+### Windows Commands
+During the Windows data collection process, the following native executables and PowerShell cmdlets are executed (either directly or indirectly via parameters): `Get-CimInstance` (querying classes such as `Win32_OperatingSystem`, `Win32_ComputerSystem`, `Win32_Process`, `Win32_Service`, `__EventFilter`, and `CommandLineEventConsumer`), `Get-NetIPAddress`, `Get-FileHash`, `Get-AuthenticodeSignature`, `Get-ScheduledTask`, `Get-ScheduledTaskInfo`, `Get-NetTCPConnection`, `Get-NetUDPEndpoint`, `Get-LocalUser`, `Get-LocalGroupMember`, `Get-ItemProperty`, `Get-ChildItem`, `Get-Item`, `Get-PSDrive`, `New-PSDrive`, `Start-Process` (invoking `cmd.exe` to run `reg.exe load` and `reg.exe unload`), `Get-BitsTransfer`, `Get-Content`, `Get-WinEvent`, `netsh advfirewall firewall show rule name=all verbose`, `Get-DnsClientCache`, `ipconfig /displaydns`, `Get-SmbSession`, `quser.exe`, and `docker ps -a --format '{{json .}}'`.
+
+### Linux Commands
+During the Linux data collection process, the following native binaries and commands are executed as subprocesses: `uname -a`, `cat /etc/os-release`, `uptime -p`, `uptime`, `ip -4 addr show`, `cat /etc/resolv.conf`, `w -h`, `docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'`, `docker ps -a --format '{{json .}}'`, `ps -eo pid,ppid,user,start_time,command`, `systemctl list-units --type=service --all --no-pager --no-legend`, `service --status-all`, `cat /etc/crontab /etc/cron.d/*`, `crontab -u`, `systemctl list-timers --all --no-pager --no-legend`, `ss -tupan`, `netstat -tupan`, `lsmod`, `tail -n 100`, `journalctl -u ssh -n 100 --no-pager`, `tail -n 50`, `cat /etc/sudoers`, `cat /etc/group`, `dpkg-query -W -f='${binary:Package}|${Version}|${Maintainer}\n'`, `rpm -qa --qf '%{NAME}|%{VERSION}|%{VENDOR}\n'`, `snap list`, `ufw status numbered`, `firewall-cmd --list-all`, `iptables -S`, and `who`.
