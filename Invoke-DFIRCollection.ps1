@@ -836,7 +836,8 @@ $HtmlContent = @'
                     <input type="checkbox" id="searchAllDatasets" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
                     Search All Datasets (All Time)
                 </label>
-                <input type="text" id="searchInput" placeholder="Search..." oninput="handleSearch(this.value)">
+                <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." oninput="renderTable(currentTab)" style="margin-right: 15px; border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main);">
+                <input type="text" id="searchInput" placeholder="Global Search..." oninput="handleSearch(this.value)">
             </div>
         </div>
         <div class="tabs" id="tabs">
@@ -1068,7 +1069,7 @@ $HtmlContent = @'
         function renderComputerList() {
             const list = document.getElementById('computerList');
             list.innerHTML = '';
-            Object.keys(groupedSystems).forEach(name => {
+            Object.keys(groupedSystems).sort((a,b) => a.localeCompare(b)).forEach(name => {
                 const li = document.createElement('li');
                 li.className = 'computer-item';
                 if (window.isCompareMode) {
@@ -1524,7 +1525,28 @@ $HtmlContent = @'
                 });
             }
 
-            // 2. Apply Per-Column Filters
+            // 2. Apply Mass Filter
+            const massFilter = document.getElementById('massFilterInput') ? document.getElementById('massFilterInput').value.trim() : '';
+            if (massFilter) {
+                arr = arr.filter(item => {
+                    if (!item) return false;
+                    const val = Object.values(item).map(v => v !== null && v !== undefined ? String(v).toLowerCase() : '').join(' ');
+                    let filterText = massFilter
+                        .replace(/\s+AND\s+/g, '&')
+                        .replace(/\s+OR\s+/g, ',')
+                        .replace(/(^|\s+|&|,)NOT\s+/g, '$1!')
+                        .toLowerCase();
+                    if (filterText.includes(',')) {
+                        return filterText.split(',').some(t => { t = t.trim(); if (!t) return false; if (t.startsWith('!')) return !val.includes(t.substring(1).trim()); return val.includes(t); });
+                    } else if (filterText.includes('&')) {
+                        return filterText.split('&').every(t => { t = t.trim(); if (!t) return true; if (t.startsWith('!')) return !val.includes(t.substring(1).trim()); return val.includes(t); });
+                    } else {
+                        return filterText.split(/\s+/).filter(t=>t).every(t => { if (t.startsWith('!')) { let ext = t.substring(1); return ext === "" ? true : !val.includes(ext); } return val.includes(t); });
+                    }
+                });
+            }
+
+            // 3. Apply Per-Column Filters
             if (Object.keys(columnFilters).length > 0) {
                 arr = arr.filter(item => {
                     if (!item) return false;
@@ -2031,8 +2053,30 @@ $HtmlContent = @'
                     const local = currentComputer['LocalUsers'] ? (Array.isArray(currentComputer['LocalUsers']) ? currentComputer['LocalUsers'] : [currentComputer['LocalUsers']]) : [];
                     const priv = currentComputer['PrivilegedAccess'] ? (Array.isArray(currentComputer['PrivilegedAccess']) ? currentComputer['PrivilegedAccess'] : [currentComputer['PrivilegedAccess']]) : [];
                     
-                    if (local.length > 0) html += buildTableHTML(local, '<h2 style="color:var(--accent);margin-bottom:10px;">Local Users</h2>', 'local-users');
-                    if (priv.length > 0) html += buildTableHTML(priv, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">Privileged Access</h2>', 'priv-users');
+                    if (local.length > 0) {
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('local-users'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">Local Users</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="local-users">${buildTableHTML(local, '', 'local-users')}</div>
+                        `;
+                    }
+                    if (priv.length > 0) {
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('priv-users'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">Privileged Access</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="priv-users">${buildTableHTML(priv, '', 'priv-users')}</div>
+                        `;
+                    }
                     
                     if (html === '') container.innerHTML = '<div class="empty-state">No users or privileges found.</div>';
                     else container.innerHTML = html;
@@ -2040,8 +2084,30 @@ $HtmlContent = @'
                     const nc = currentComputer['NetworkConnections'] ? (Array.isArray(currentComputer['NetworkConnections']) ? currentComputer['NetworkConnections'] : [currentComputer['NetworkConnections']]) : [];
                     const arp = currentComputer['ArpTable'] ? (Array.isArray(currentComputer['ArpTable']) ? currentComputer['ArpTable'] : [currentComputer['ArpTable']]) : [];
                     
-                    if (nc.length > 0) html += buildTableHTML(nc, '<h2 style="color:var(--accent);margin-bottom:10px;">Network Connections</h2>', 'net-conns');
-                    if (arp.length > 0) html += buildTableHTML(arp, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">ARP Table</h2>', 'arp-table');
+                    if (nc.length > 0) {
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('net-conns'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">Network Connections</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="net-conns">${buildTableHTML(nc, '', 'net-conns')}</div>
+                        `;
+                    }
+                    if (arp.length > 0) {
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('arp-table'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">ARP Table</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="arp-table">${buildTableHTML(arp, '', 'arp-table')}</div>
+                        `;
+                    }
                     
                     if (html === '') container.innerHTML = '<div class="empty-state">No network data found.</div>';
                     else container.innerHTML = html;

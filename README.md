@@ -63,7 +63,8 @@ To run a collection on your current Windows machine, simply execute the orchestr
 ```
 
 ### 2. Remote Windows Collection
-Pass an array of computer names to the `-ComputerName` parameter, or provide a CSV file using `-ComputerCsvPath` (the CSV must have a `ComputerName` column). WinRM must be enabled on the targets.
+Pass an array of computer names to the `-ComputerName` parameter, or provide a CSV file using `-ComputerCsvPath`. WinRM must be enabled on the targets.
+*(Note: The CSV file must contain a `ComputerName` header, with each computer name on its own new line, e.g., `ComputerName\nWIN-SRV01\nWIN-SRV02`)*
 ```powershell
 # Remote collection using current user context
 .\Invoke-DFIRCollection.ps1 -ComputerName "WIN-SRV01", "WIN-SRV02"
