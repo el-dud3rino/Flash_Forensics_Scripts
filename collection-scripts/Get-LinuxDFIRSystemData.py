@@ -28,6 +28,7 @@ results = {
     "Services": [],
     "ScheduledTasks": [],
     "NetworkConnections": [],
+    "ArpTable": [],
     "LocalUsers": [],
     "SystemPersistence": [],
     "StartupFiles": [],
@@ -159,6 +160,47 @@ if len(lines) > 1:
             "ProcessName": proc_name,
             "ProcessPath": proc_path
         })
+
+# 4.5 ARP Table
+arp_out = run_cmd("ip neigh show")
+if arp_out:
+    for line in arp_out.strip().split('\n'):
+        if line.strip():
+            parts = line.split()
+            if len(parts) >= 1:
+                ip = parts[0]
+                mac = ""
+                state = ""
+                iface = ""
+                if 'lladdr' in parts:
+                    idx = parts.index('lladdr')
+                    if idx + 1 < len(parts):
+                        mac = parts[idx+1]
+                if 'dev' in parts:
+                    idx = parts.index('dev')
+                    if idx + 1 < len(parts):
+                        iface = parts[idx+1]
+                state = parts[-1] if len(parts) > 1 else ""
+                results["ArpTable"].append({
+                    "IPAddress": ip,
+                    "LinkLayerAddress": mac,
+                    "State": state,
+                    "InterfaceAlias": iface
+                })
+else:
+    arp_out = run_cmd("arp -an")
+    if arp_out:
+        import re
+        for line in arp_out.strip().split('\n'):
+            if " at " in line:
+                m = re.search(r'\((.*?)\)\s+at\s+(.*?)\s+.*on\s+(.*)', line)
+                if m:
+                    results["ArpTable"].append({
+                        "IPAddress": m.group(1),
+                        "LinkLayerAddress": m.group(2),
+                        "State": "N/A",
+                        "InterfaceAlias": m.group(3)
+                    })
 
 # 5. Local Users
 try:

@@ -23,6 +23,7 @@ $Results = @{
     Services = @()
     ScheduledTasks = @()
     NetworkConnections = @()
+    ArpTable = @()
     LocalUsers = @()
     SystemPersistence = @()
     StartupFiles = @()
@@ -136,6 +137,13 @@ try {
     $Results.NetworkConnections = $MappedConns
 } catch {
     Write-Warning "Failed to collect Network Connections: $_"
+}
+
+try {
+    # 4.5. ARP Table
+    $Results.ArpTable = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object IPAddress, LinkLayerAddress, State, InterfaceAlias
+} catch {
+    Write-Warning "Failed to collect ARP Table: $_"
 }
 
 try {

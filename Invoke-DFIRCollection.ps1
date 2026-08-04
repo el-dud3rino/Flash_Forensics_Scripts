@@ -292,6 +292,9 @@ foreach ($Result in $Results) {
     if ($Result.NetworkConnections) {
         $Result.NetworkConnections | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-NetworkConnections.csv") -NoTypeInformation
     }
+    if ($Result.ArpTable) {
+        $Result.ArpTable | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-ArpTable.csv") -NoTypeInformation
+    }
     if ($Result.LocalUsers) {
         $Result.LocalUsers | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-LocalUsers.csv") -NoTypeInformation
     }
@@ -342,6 +345,7 @@ foreach ($Result in $Results) {
     $LogEntries += $AddLog.Invoke("Services", @($Result.Services).Count, "Win32_Service CIM Instance", "systemctl")
     $LogEntries += $AddLog.Invoke("Scheduled Tasks", @($Result.ScheduledTasks).Count, "Get-ScheduledTask", "crontab")
     $LogEntries += $AddLog.Invoke("Network Connections", @($Result.NetworkConnections).Count, "Get-NetTCPConnection", "ss/netstat")
+    $LogEntries += $AddLog.Invoke("ARP Table", @($Result.ArpTable).Count, "Get-NetNeighbor", "ip neigh/arp")
     $LogEntries += $AddLog.Invoke("Local Users", @($Result.LocalUsers).Count, "Get-LocalUser", "/etc/passwd")
     $LogEntries += $AddLog.Invoke("System Persistence", @($Result.SystemPersistence).Count, "Registry Parsing", "rc/bashrc/ssh configs")
     $LogEntries += $AddLog.Invoke("Startup Files", @($Result.StartupFiles).Count, "File System Enumeration", "File System Enumeration")
@@ -959,7 +963,7 @@ $HtmlContent = @'
                 case 'Processes': return ['Name', 'Path', 'CommandLine', 'SHA256', 'Signer'];
                 case 'Services': return ['Name', 'DisplayName', 'PathName', 'StartMode', 'State'];
                 case 'ScheduledTasks': return ['TaskName', 'TaskPath', 'Command', 'Arguments'];
-                case 'NetworkConnections': return ['ProcessName', 'ProcessPath', 'Protocol', 'RemoteAddress', 'RemotePort', 'State'];
+                case 'NetworkConnections': return ['ProcessName', 'ProcessPath', 'Protocol', 'RemoteAddress', 'RemotePort', 'State', 'IPAddress', 'LinkLayerAddress', 'InterfaceAlias'];
                 case 'Users': return ['Name', 'Enabled'];
                 case 'SystemPersistence': return ['Key', 'ValueName', 'Source'];
                 case 'StartupFiles': return ['Executable', 'Signer', 'Source'];
@@ -1814,6 +1818,11 @@ $HtmlContent = @'
                             const p = sys['PrivilegedAccess'] ? (Array.isArray(sys['PrivilegedAccess']) ? sys['PrivilegedAccess'] : [sys['PrivilegedAccess']]) : [];
                             l.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'LocalUsers'; copy._System = hostname; allItems.push(copy); });
                             p.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'PrivilegedAccess'; copy._System = hostname; allItems.push(copy); });
+                        } else if (tabName === 'NetworkConnections') {
+                            const nc = sys['NetworkConnections'] ? (Array.isArray(sys['NetworkConnections']) ? sys['NetworkConnections'] : [sys['NetworkConnections']]) : [];
+                            const arp = sys['ArpTable'] ? (Array.isArray(sys['ArpTable']) ? sys['ArpTable'] : [sys['ArpTable']]) : [];
+                            nc.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'NetworkConnections'; copy._System = hostname; allItems.push(copy); });
+                            arp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'ArpTable'; copy._System = hostname; allItems.push(copy); });
                         } else {
                             let sysData = sys[tabName];
                             if (sysData) {
@@ -1889,6 +1898,15 @@ $HtmlContent = @'
                     if (local.length > 0) html += buildTableHTML(local, '<h2 style="color:var(--accent);margin-bottom:10px;">Local Users (Compare Mode)</h2>', 'local-users');
                     if (priv.length > 0) html += buildTableHTML(priv, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">Privileged Access (Compare Mode)</h2>', 'priv-users');
                     container.innerHTML = html;
+                } else if (tabName === 'NetworkConnections') {
+                    const nc = stackedArr.filter(i => i._CompareType === 'NetworkConnections');
+                    const arp = stackedArr.filter(i => i._CompareType === 'ArpTable');
+                    nc.forEach(i => { delete i._CompareType; delete i._System; });
+                    arp.forEach(i => { delete i._CompareType; delete i._System; });
+                    
+                    if (nc.length > 0) html += buildTableHTML(nc, '<h2 style="color:var(--accent);margin-bottom:10px;">Network Connections (Compare Mode)</h2>', 'net-conns');
+                    if (arp.length > 0) html += buildTableHTML(arp, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">ARP Table (Compare Mode)</h2>', 'arp-table');
+                    container.innerHTML = html;
                 } else {
                     stackedArr.forEach(i => { delete i._System; });
                     
@@ -1945,6 +1963,16 @@ $HtmlContent = @'
                     let tp = targetSys['PrivilegedAccess'] ? (Array.isArray(targetSys['PrivilegedAccess']) ? targetSys['PrivilegedAccess'] : [targetSys['PrivilegedAccess']]) : [];
                     tl.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'LocalUsers'; tData.push(copy); });
                     tp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'PrivilegedAccess'; tData.push(copy); });
+                } else if (tabName === 'NetworkConnections') {
+                    let bnc = baseSys['NetworkConnections'] ? (Array.isArray(baseSys['NetworkConnections']) ? baseSys['NetworkConnections'] : [baseSys['NetworkConnections']]) : [];
+                    let barp = baseSys['ArpTable'] ? (Array.isArray(baseSys['ArpTable']) ? baseSys['ArpTable'] : [baseSys['ArpTable']]) : [];
+                    bnc.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'NetworkConnections'; bData.push(copy); });
+                    barp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'ArpTable'; bData.push(copy); });
+                    
+                    let tnc = targetSys['NetworkConnections'] ? (Array.isArray(targetSys['NetworkConnections']) ? targetSys['NetworkConnections'] : [targetSys['NetworkConnections']]) : [];
+                    let tarp = targetSys['ArpTable'] ? (Array.isArray(targetSys['ArpTable']) ? targetSys['ArpTable'] : [targetSys['ArpTable']]) : [];
+                    tnc.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'NetworkConnections'; tData.push(copy); });
+                    tarp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'ArpTable'; tData.push(copy); });
                 } else {
                     bData = baseSys[tabName] ? (Array.isArray(baseSys[tabName]) ? baseSys[tabName] : [baseSys[tabName]]) : [];
                     tData = targetSys[tabName] ? (Array.isArray(targetSys[tabName]) ? targetSys[tabName] : [targetSys[tabName]]) : [];
@@ -1955,7 +1983,7 @@ $HtmlContent = @'
                 let shouldGroup = false;
                 let groupProp = 'Source';
                 
-                if (tabName === 'Users') { shouldGroup = true; groupProp = '_CompareType'; }
+                if (tabName === 'Users' || tabName === 'NetworkConnections') { shouldGroup = true; groupProp = '_CompareType'; }
                 else if (tabName === 'EventLogs' && window.eventLogGroupMode) { shouldGroup = true; groupProp = 'EventId'; }
                 else if (tabName !== 'EventLogs' && arrData.some(i => i && i.Source)) { shouldGroup = true; groupProp = 'Source'; }
                 
@@ -2002,6 +2030,15 @@ $HtmlContent = @'
                     if (priv.length > 0) html += buildTableHTML(priv, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">Privileged Access</h2>', 'priv-users');
                     
                     if (html === '') container.innerHTML = '<div class="empty-state">No users or privileges found.</div>';
+                    else container.innerHTML = html;
+                } else if (tabName === 'NetworkConnections') {
+                    const nc = currentComputer['NetworkConnections'] ? (Array.isArray(currentComputer['NetworkConnections']) ? currentComputer['NetworkConnections'] : [currentComputer['NetworkConnections']]) : [];
+                    const arp = currentComputer['ArpTable'] ? (Array.isArray(currentComputer['ArpTable']) ? currentComputer['ArpTable'] : [currentComputer['ArpTable']]) : [];
+                    
+                    if (nc.length > 0) html += buildTableHTML(nc, '<h2 style="color:var(--accent);margin-bottom:10px;">Network Connections</h2>', 'net-conns');
+                    if (arp.length > 0) html += buildTableHTML(arp, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">ARP Table</h2>', 'arp-table');
+                    
+                    if (html === '') container.innerHTML = '<div class="empty-state">No network data found.</div>';
                     else container.innerHTML = html;
                 } else {
                 const dataArray = currentComputer[tabName];
