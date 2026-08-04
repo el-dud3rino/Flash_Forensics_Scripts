@@ -8,14 +8,20 @@ This playbook provides a checklist of commands and locations used to manually ga
   - [Processes](#processes)
   - [Services](#services)
   - [Scheduled Tasks](#scheduled-tasks)
-  - [Network Connections](#network-connections)
+  - [Network Connections & ARP](#network-connections--arp)
   - [Local Users and Privileged Access](#local-users-and-privileged-access)
+  - [Active Logged In Users](#active-logged-in-users)
   - [System Persistence](#system-persistence)
   - [Startup Files](#startup-files)
   - [Execution Evidence](#execution-evidence)
+  - [Recycle Bin](#recycle-bin)
   - [USB History](#usb-history)
   - [Installed Software](#installed-software)
   - [Firewall Rules](#firewall-rules)
+  - [RDP Connections](#rdp-connections)
+  - [Docker Containers](#docker-containers)
+  - [DNS Cache](#dns-cache)
+  - [SMB Sessions](#smb-sessions)
   - [Event Logs](#event-logs)
   - [Super Timeline Generation (Plaso)](#super-timeline-generation-plaso)
 - [Linux Commands](#linux-commands)
@@ -23,13 +29,17 @@ This playbook provides a checklist of commands and locations used to manually ga
   - [Processes](#processes-1)
   - [Services](#services-1)
   - [Scheduled Tasks](#scheduled-tasks-1)
-  - [Network Connections](#network-connections-1)
+  - [Network Connections & ARP](#network-connections--arp-1)
   - [Kernel Modules](#kernel-modules)
   - [Local Users and Privileged Access](#local-users-and-privileged-access-1)
+  - [Active Logged In Users](#active-logged-in-users-1)
   - [System Persistence and Startup Files](#system-persistence-and-startup-files)
   - [Execution Evidence](#execution-evidence-1)
+  - [Recycle Bin](#recycle-bin-1)
   - [Installed Software](#installed-software-1)
   - [Firewall Rules](#firewall-rules-1)
+  - [Docker Containers](#docker-containers-1)
+  - [DNS Configuration](#dns-configuration)
   - [Event Logs](#event-logs-1)
 
 ## Windows Commands
@@ -62,13 +72,14 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `Get-ScheduledTask | Select-Object TaskName, TaskPath, State, Author`
   - `(Get-ScheduledTask).Actions`
 
-### Network Connections
-- **Goal**: Enumerate active network connections.
-- **Description**: Lists listening and established TCP and UDP endpoints, mapping them to process IDs.
+### Network Connections & ARP
+- **Goal**: Enumerate active network connections and the ARP cache.
+- **Description**: Lists listening and established TCP and UDP endpoints, mapping them to process IDs, and dumps the ARP table.
 - **External Tools**: [Sysinternals TCPView](https://learn.microsoft.com/en-us/sysinternals/downloads/tcpview) for a live GUI view of all network endpoints and their owning processes.
 - **Commands**:
   - `Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess`
   - `Get-NetUDPEndpoint | Select-Object LocalAddress, LocalPort, OwningProcess`
+  - `Get-NetNeighbor` or `arp -a`
 
 ### Local Users and Privileged Access
 - **Goal**: Enumerate local user accounts and administrative group members.
@@ -77,6 +88,12 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `Get-LocalUser | Select-Object Name, Enabled, Description, LastLogon`
   - `Get-LocalGroupMember -Group "Administrators"`
   - `Get-LocalGroupMember -Group "Remote Desktop Users"`
+
+### Active Logged In Users
+- **Goal**: Enumerate currently active interactive or RDP sessions.
+- **Description**: Bypasses WMI to directly execute `quser.exe` and identify active console or RDP sessions.
+- **Commands**:
+  - `quser.exe` or `query user`
 
 ### System Persistence
 - **Goal**: Identify common registry-based persistence mechanisms.
@@ -108,6 +125,12 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `Get-ChildItem -Path "C:\Windows\Prefetch\*.pf" -File`
   - `Get-Content (Get-PSReadLineOption).HistorySavePath`
 
+### Recycle Bin
+- **Goal**: Enumerate deleted files and their original paths.
+- **Description**: Parses the binary `$I` files stored in `C:\$Recycle.Bin` across all user SIDs to reconstruct deleted files and deletion timestamps.
+- **Commands**:
+  - `Get-ChildItem -Path 'C:\$Recycle.Bin' -Recurse -Filter '$I*'`
+
 ### USB History
 - **Goal**: Enumerate historically connected USB devices.
 - **Description**: Queries the USBSTOR registry key to identify previously connected thumb drives.
@@ -129,6 +152,33 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `Get-NetFirewallRule -Enabled True | Get-NetFirewallAddressFilter`
   - `Get-NetFirewallRule -Enabled True | Get-NetFirewallPortFilter`
   - `Get-NetFirewallRule -Enabled True | Get-NetFirewallApplicationFilter`
+  - `netsh advfirewall firewall show rule name=all verbose`
+
+### RDP Connections
+- **Goal**: Identify historical inbound and outbound RDP connections.
+- **Description**: Queries Terminal Services event logs and the registry to map Source/Destination IPs for RDP activity.
+- **Commands**:
+  - *Inbound*: `Get-WinEvent -LogName "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"` (IDs 21, 24, 25)
+  - *Outbound*: `Get-ItemProperty "HKCU:\Software\Microsoft\Terminal Server Client\Servers\*"`
+
+### Docker Containers
+- **Goal**: Enumerate running Docker containers and port mappings.
+- **Description**: Runs Docker CLI commands to extract container status.
+- **Commands**:
+  - `docker ps -a`
+
+### DNS Cache
+- **Goal**: Identify recently resolved domains and their IPs.
+- **Description**: Pulls the local DNS resolver cache to track potential C2 or data exfiltration domains.
+- **Commands**:
+  - `Get-DnsClientCache`
+  - `ipconfig /displaydns`
+
+### SMB Sessions
+- **Goal**: Identify active inbound SMB network sessions.
+- **Description**: Extracts connected clients and the shares they are accessing over SMB.
+- **Commands**:
+  - `Get-SmbSession`
 
 ### Event Logs
 - **Goal**: Extract key security and operational event logs.
@@ -185,12 +235,13 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `for u in $(cat /etc/passwd | cut -d: -f1); do crontab -u $u -l; done`
   - `systemctl list-timers --all --no-pager --no-legend`
 
-### Network Connections
-- **Goal**: Enumerate active network connections.
-- **Description**: Lists listening and established TCP and UDP endpoints using `ss` or `netstat`.
+### Network Connections & ARP
+- **Goal**: Enumerate active network connections and the ARP cache.
+- **Description**: Lists listening and established TCP and UDP endpoints using `ss` or `netstat`, and dumps the ARP table.
 - **Commands**:
   - `ss -tupan`
   - `netstat -tupan`
+  - `ip neigh` or `arp -a`
 
 ### Kernel Modules
 - **Goal**: Enumerate loaded kernel modules.
@@ -205,6 +256,13 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `cat /etc/passwd`
   - `cat /etc/sudoers | grep -v '^#'`
   - `cat /etc/group | grep -E '^(sudo|wheel):'`
+
+### Active Logged In Users
+- **Goal**: Enumerate active SSH and console sessions.
+- **Description**: Identifies active PTY/TTY and SSH sessions with remote host IPs.
+- **Commands**:
+  - `who`
+  - `w -h`
 
 ### System Persistence and Startup Files
 - **Goal**: Identify common persistence mechanisms and startup scripts.
@@ -221,6 +279,12 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `cat ~/.bash_history ~/.zsh_history`
   - `cat /var/log/auth.log | grep sudo`
 
+### Recycle Bin
+- **Goal**: Enumerate deleted files and their original paths.
+- **Description**: Parses `.trashinfo` files in user home directories to reconstruct deleted files and deletion timestamps.
+- **Commands**:
+  - `cat ~/.local/share/Trash/info/*.trashinfo`
+
 ### Installed Software
 - **Goal**: Enumerate installed packages.
 - **Description**: Queries dpkg, rpm, or snap for installed software based on the package manager.
@@ -236,6 +300,18 @@ This playbook provides a checklist of commands and locations used to manually ga
   - `ufw status numbered`
   - `firewall-cmd --list-all`
   - `iptables -S`
+
+### Docker Containers
+- **Goal**: Enumerate running Docker containers and port mappings.
+- **Description**: Runs Docker CLI commands to extract container status.
+- **Commands**:
+  - `docker ps -a`
+
+### DNS Configuration
+- **Goal**: Identify local DNS resolver configurations.
+- **Description**: Reads the resolv.conf file to find configured upstream nameservers.
+- **Commands**:
+  - `cat /etc/resolv.conf`
 
 ### Event Logs
 - **Goal**: Extract key authentication and system event logs.
