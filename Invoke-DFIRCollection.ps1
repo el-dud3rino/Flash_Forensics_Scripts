@@ -295,6 +295,9 @@ foreach ($Result in $Results) {
     if ($Result.ArpTable) {
         $Result.ArpTable | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-ArpTable.csv") -NoTypeInformation
     }
+    if ($Result.RecycleBin) {
+        $Result.RecycleBin | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-RecycleBin.csv") -NoTypeInformation
+    }
     if ($Result.LocalUsers) {
         $Result.LocalUsers | Export-Csv -Path (Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-LocalUsers.csv") -NoTypeInformation
     }
@@ -346,6 +349,7 @@ foreach ($Result in $Results) {
     $LogEntries += $AddLog.Invoke("Scheduled Tasks", @($Result.ScheduledTasks).Count, "Get-ScheduledTask", "crontab")
     $LogEntries += $AddLog.Invoke("Network Connections", @($Result.NetworkConnections).Count, "Get-NetTCPConnection", "ss/netstat")
     $LogEntries += $AddLog.Invoke("ARP Table", @($Result.ArpTable).Count, "Get-NetNeighbor", "ip neigh/arp")
+    $LogEntries += $AddLog.Invoke("Recycle Bin", @($Result.RecycleBin).Count, "Parse `$I Files", ".trashinfo files")
     $LogEntries += $AddLog.Invoke("Local Users", @($Result.LocalUsers).Count, "Get-LocalUser", "/etc/passwd")
     $LogEntries += $AddLog.Invoke("System Persistence", @($Result.SystemPersistence).Count, "Registry Parsing", "rc/bashrc/ssh configs")
     $LogEntries += $AddLog.Invoke("Startup Files", @($Result.StartupFiles).Count, "File System Enumeration", "File System Enumeration")
@@ -841,6 +845,7 @@ $HtmlContent = @'
             <div class="tab" data-tab="Services" onclick="switchTab('Services')">Services</div>
             <div class="tab" data-tab="ScheduledTasks" onclick="switchTab('ScheduledTasks')">Tasks</div>
             <div class="tab" data-tab="NetworkConnections" onclick="switchTab('NetworkConnections')">Network</div>
+            <div class="tab" data-tab="RecycleBin" onclick="switchTab('RecycleBin')">Recycle Bin</div>
             <div class="tab" data-tab="Users" onclick="switchTab('Users')">Users</div>
             <div class="tab" data-tab="SystemPersistence" onclick="switchTab('SystemPersistence')">Persistence</div>
             <div class="tab" data-tab="StartupFiles" onclick="switchTab('StartupFiles')">Startup</div>

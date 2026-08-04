@@ -38,6 +38,7 @@ The orchestrator parses the existing `data.js` payload to identify previously sc
     *   Reads the cleartext source of all known local PowerShell profile locations (e.g., `Microsoft.PowerShell_profile.ps1`).
     *   Polls `Get-BitsTransfer -AllUsers` for persistence via BITS jobs.
 *   **Execution Evidence**: Parses the `C:\Windows\Prefetch\*.pf` directory metadata and reads the `ConsoleHost_history.txt` (PSReadLine history) for every user profile.
+*   **Recycle Bin**: Enumerates all subdirectories in `C:\$Recycle.Bin` and manually parses the binary `$I` files (supporting both v1 and v2 formats) to extract original file paths, deletion times, and sizes across all user SIDs.
 *   **Firewall Rules**: Uses `netsh advfirewall firewall show rule name=all verbose` and parses the output via Regex grouping, specifically filtering for `Enabled = "Yes"`.
 *   **RDP Connections**:
     *   **Inbound**: Queries `Microsoft-Windows-TerminalServices-LocalSessionManager/Operational` (Event IDs `21`, `24`, `25`).
@@ -72,6 +73,7 @@ The Python payload relies heavily on executing native Linux binaries via `subpro
 *   **Local Users**: Directly reads `/etc/passwd`.
 *   **System Persistence**: Reads the raw contents of `rc.local`, `.bashrc`, `.bash_profile`, and `.ssh/authorized_keys` for all users in `/home/` and `/root/`. Parses `crontab -l` for users and dumps `/etc/cron.*` directories.
 *   **Execution Evidence**: Reads `.bash_history` for all users and parses `/var/log/auth.log` or `/var/log/secure` for `sudo` command executions.
+*   **Recycle Bin**: Parses `.local/share/Trash/info/*.trashinfo` files across all user home directories defined in `/etc/passwd` to extract original file paths and deletion dates.
 *   **Installed Software**: Uses `dpkg-query -W` (Debian/Ubuntu), `rpm -qa` (RHEL/CentOS), and `snap list`.
 *   **Firewall Rules**: Checks for `ufw status`, `firewall-cmd --list-all`, or dumps raw `iptables -S`.
 *   **DNS Configuration**: Reads and parses `/etc/resolv.conf`.

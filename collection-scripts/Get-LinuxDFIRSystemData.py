@@ -29,6 +29,7 @@ results = {
     "ScheduledTasks": [],
     "NetworkConnections": [],
     "ArpTable": [],
+    "RecycleBin": [],
     "LocalUsers": [],
     "SystemPersistence": [],
     "StartupFiles": [],
@@ -541,6 +542,37 @@ try:
                 })
             except:
                 pass
+except:
+    pass
+
+# 19. Recycle Bin
+try:
+    with open('/etc/passwd', 'r') as f:
+        for line in f:
+            parts = line.strip().split(':')
+            if len(parts) >= 6:
+                user = parts[0]
+                home = parts[5]
+                trash_info_dir = os.path.join(home, ".local/share/Trash/info")
+                if os.path.exists(trash_info_dir):
+                    for info_file in glob.glob(os.path.join(trash_info_dir, "*.trashinfo")):
+                        try:
+                            orig_path = ""
+                            del_date = ""
+                            with open(info_file, 'r') as tf:
+                                for tline in tf:
+                                    if tline.startswith("Path="):
+                                        orig_path = tline.split("=", 1)[1].strip()
+                                    elif tline.startswith("DeletionDate="):
+                                        del_date = tline.split("=", 1)[1].strip()
+                            results["RecycleBin"].append({
+                                "User": user,
+                                "OriginalPath": orig_path,
+                                "DeletionTime": del_date,
+                                "InfoFile": os.path.basename(info_file)
+                            })
+                        except:
+                            pass
 except:
     pass
 

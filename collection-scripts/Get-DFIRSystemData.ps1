@@ -39,6 +39,7 @@ $Results = @{
     SMBSessions = @()
     LoggedinUsers = @()
     DockerContainers = @()
+    RecycleBin = @()
     ComputerName = $env:COMPUTERNAME
     Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
@@ -802,5 +803,55 @@ try {
     }
     $Results.DockerContainers = $DockerData
 } catch { Write-Warning "Failed to collect Docker Containers: $_" }
+
+try {
+    # 19. Recycle Bin
+    $RecycleData = @()
+    
+    function Parse-IFile {
+        param([string]$FilePath)
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+            if ($bytes.Length -lt 28) { return $null }
+            $version = [BitConverter]::ToInt64($bytes, 0)
+            $size = [BitConverter]::ToInt64($bytes, 8)
+            $delTimeRaw = [BitConverter]::ToInt64($bytes, 16)
+            $delTime = [DateTime]::FromFileTime($delTimeRaw).ToString("yyyy-MM-ddTHH:mm:ssZ")
+            
+            $path = ""
+            if ($version -eq 1 -and $bytes.Length -ge 544) {
+                $path = [System.Text.Encoding]::Unicode.GetString($bytes, 24, 520).TrimEnd([char]0)
+            } elseif ($version -eq 2) {
+                $nameLen = [BitConverter]::ToInt32($bytes, 24) * 2
+                if ($bytes.Length -ge (28 + $nameLen)) {
+                    $path = [System.Text.Encoding]::Unicode.GetString($bytes, 28, $nameLen).TrimEnd([char]0)
+                }
+            }
+            return @{ Size = $size; DeletionTime = $delTime; OriginalPath = $path }
+        } catch { return $null }
+    }
+
+    $RecycleBinPath = "C:\`$Recycle.Bin"
+    if (Test-Path $RecycleBinPath) {
+        $IFiles = Get-ChildItem -Path $RecycleBinPath -Recurse -Force -Filter "`$I*" -ErrorAction SilentlyContinue
+        foreach ($IFile in $IFiles) {
+            $parsed = Parse-IFile -FilePath $IFile.FullName
+            if ($parsed) {
+                $SID = "Unknown"
+                $parts = $IFile.FullName.Split('\')
+                if ($parts.Count -ge 3) { $SID = $parts[2] }
+                
+                $RecycleData += [PSCustomObject]@{
+                    UserSID = $SID
+                    OriginalPath = $parsed.OriginalPath
+                    DeletionTime = $parsed.DeletionTime
+                    Size = $parsed.Size
+                    InfoFile = $IFile.Name
+                }
+            }
+        }
+    }
+    $Results.RecycleBin = $RecycleData
+} catch { Write-Warning "Failed to collect Recycle Bin: $_" }
 
 return [PSCustomObject]$Results

@@ -29,6 +29,7 @@ For every targeted system, the script maps cross-platform data:
 - **System Persistence**: Evaluates `Run/RunOnce` keys, BITS jobs, and `BootExecute` on Windows. Evaluates bash profiles, `rc.local`, and `authorized_keys` on Linux. 
 - **Startup Files**: Enumerates system and per-user Startup/autostart folders on both OSes.
 - **Execution Evidence**: Top 200 Windows Prefetch files, PSReadLine PowerShell History, Linux `sudo` executions, and Linux bash history. Features a built-in Javascript parser to directly import Eric Zimmerman `PECmd` CSV exports!
+- **Recycle Bin**: Parses Windows binary `$I` files across all SIDs and Linux `.trashinfo` files to reconstruct deleted files and deletion timestamps.
 - **Installed Software**: Name, Version, Publisher, Install Date (Windows via Registry, Linux via dpkg/rpm/snap).
 - **Firewall Rules**: Technical properties including local/remote IPs, Ports, Programs, Action and Direction (Windows via netsh, Linux via ufw/firewalld/iptables).
 - **RDP Connections**: Aggregates Inbound RDP (Event Logs 21, 24, 25) and Outbound RDP (Event Log 1024, Terminal Server Client Registry) providing Source/Destination IP mapping.
@@ -132,6 +133,7 @@ If you run the collection script on the same system multiple times, the dashboar
          ├── 📄 <ComputerName>-LocalUsers.csv
          ├── 📄 <ComputerName>-SystemPersistence.csv
          ├── 📄 <ComputerName>-StartupFiles.csv
+         ├── 📄 <ComputerName>-RecycleBin.csv
          └── 📄 <ComputerName>-EventLogs.csv
 ```
 
