@@ -823,21 +823,25 @@ $HtmlContent = @'
                 <h1 id="computerTitle">Select a System</h1>
                 <span id="timestampBadge" style="color: var(--text-muted); font-size: 0.875rem;"></span>
             </div>
-            <div class="search-container" style="display: flex; align-items: center; gap: 15px;">
-                <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer; margin-right: 15px;">
-                    <input type="checkbox" id="filterSigned" style="margin-right: 6px;" onchange="switchTab(currentTab)">
-                    Hide Signed Binaries
-                </label>
-                <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
-                    <input type="checkbox" id="searchLatestAllSystems" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
-                    Search Latest (All Systems)
-                </label>
-                <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer; margin-right: 10px;">
-                    <input type="checkbox" id="searchAllDatasets" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
-                    Search All Datasets (All Time)
-                </label>
-                <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." oninput="renderTable(currentTab)" style="margin-right: 15px; border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main);">
-                <input type="text" id="searchInput" placeholder="Global Search..." oninput="handleSearch(this.value)">
+            <div class="search-container" style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="filterSigned" style="margin-right: 6px;" onchange="switchTab(currentTab)">
+                        Hide Signed Binaries
+                    </label>
+                    <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." onkeydown="if(event.key === 'Enter') renderTable(currentTab)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
+                    <input type="text" id="searchInput" placeholder="Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
+                </div>
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="searchLatestAllSystems" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
+                        Search Latest (All Systems)
+                    </label>
+                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="searchAllDatasets" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
+                        Search All Datasets (All Time)
+                    </label>
+                </div>
             </div>
         </div>
         <div class="tabs" id="tabs">
@@ -1686,7 +1690,7 @@ $HtmlContent = @'
                 html += `<th>
                             <div class="sortable-header" onclick="sortTable('${escapeHtml(k)}')">${escapeHtml(k)}${sortIndicator}</div>
                             <div style="display:flex; align-items:center; position:relative; margin-top:5px;">
-                                <input type="text" id="filter-${groupId}-${escapeHtml(k)}" class="column-filter" placeholder="Filter..." value="${filterValue}" oninput="setColumnFilter('${escapeHtml(k)}', this.value)" style="width:100%; border-radius:4px 0 0 4px;">
+                                <input type="text" id="filter-${groupId}-${escapeHtml(k)}" class="column-filter" placeholder="Filter..." value="${filterValue}" onkeydown="if(event.key === 'Enter') setColumnFilter('${escapeHtml(k)}', this.value)" style="width:100%; border-radius:4px 0 0 4px;">
                                 <button title="Filter Builder" style="background:var(--accent); color:white; border:1px solid var(--accent); border-radius:0 4px 4px 0; padding:3px 6px; cursor:pointer;" onclick="toggleFilterHelp('${groupId}-${escapeHtml(k)}')">&#9660;</button>
                                 <div id="filterHelp-${groupId}-${escapeHtml(k)}" style="display:none; position:absolute; top:100%; right:0; background:var(--bg-color); border:1px solid var(--glass-border); border-radius:4px; padding:5px; z-index:100; box-shadow: 0 4px 6px rgba(0,0,0,0.5); flex-direction:column; gap:5px; min-width: 140px;">
                                     <div style="font-size:0.7rem; color:var(--text-muted); padding:3px; text-align:center; border-bottom:1px solid var(--glass-border);">Add Rule</div>
