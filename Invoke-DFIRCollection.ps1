@@ -718,7 +718,7 @@ $HtmlContent = @'
         /* Process Tree */
         ul.process-tree {
             list-style-type: none;
-            padding-left: 20px;
+            padding-left: 30px;
             margin: 0;
             font-family: 'Inter', sans-serif;
             color: var(--text-main);
@@ -732,8 +732,8 @@ $HtmlContent = @'
             content: '';
             position: absolute;
             top: -5px;
-            left: -15px;
-            border-left: 1px solid var(--glass-border);
+            left: -20px;
+            border-left: 2px solid var(--accent-hover);
             bottom: 50%;
             height: 100%;
         }
@@ -741,9 +741,9 @@ $HtmlContent = @'
             content: '';
             position: absolute;
             top: 15px;
-            left: -15px;
-            border-top: 1px solid var(--glass-border);
-            width: 15px;
+            left: -20px;
+            border-top: 2px solid var(--accent-hover);
+            width: 20px;
         }
         ul.process-tree:not(.process-tree-root) > li:last-child::before {
             height: 20px;
@@ -828,6 +828,10 @@ $HtmlContent = @'
                     <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
                         <input type="checkbox" id="filterSigned" style="margin-right: 6px;" onchange="switchTab(currentTab)">
                         Hide Signed Binaries
+                    </label>
+                    <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="hideKnownGood" style="margin-right: 6px;" onchange="toggleHideKnownGood(this.checked)">
+                        Hide Known Good
                     </label>
                     <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." onkeydown="if(event.key === 'Enter') renderTable(currentTab)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
                     <input type="text" id="searchInput" placeholder="Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
@@ -1080,7 +1084,7 @@ $HtmlContent = @'
         function renderComputerList() {
             const list = document.getElementById('computerList');
             list.innerHTML = '';
-            Object.keys(groupedSystems).sort((a,b) => a.localeCompare(b)).forEach(name => {
+            Object.keys(groupedSystems).sort((a,b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).forEach(name => {
                 const li = document.createElement('li');
                 li.className = 'computer-item';
                 if (window.isCompareMode) {
@@ -1099,6 +1103,10 @@ $HtmlContent = @'
 
         function initApp() {
             let systems = Array.isArray(dfirData) ? dfirData : [dfirData];
+            
+            const storedHideKnownGood = localStorage.getItem('dfirHideKnownGood') === 'true';
+            const hideKnownGoodCb = document.getElementById('hideKnownGood');
+            if (hideKnownGoodCb) hideKnownGoodCb.checked = storedHideKnownGood;
             
             function cleanDates(obj) {
                 if (!obj) return;
@@ -2622,6 +2630,11 @@ $HtmlContent = @'
             const flags = getFlaggedItems();
             const str = hashItem(item);
             return flags.some(f => hashItem(f.data) === str);
+        }
+
+        function toggleHideKnownGood(isChecked) {
+            localStorage.setItem('dfirHideKnownGood', isChecked);
+            renderTable(currentTab);
         }
 
         function toggleKnownGood(trId, event) {
