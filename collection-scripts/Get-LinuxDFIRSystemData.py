@@ -42,7 +42,8 @@ results = {
     "LoggedinUsers": [],
     "DockerContainers": [],
     "DNSCache": [],
-    "SMBSessions": []
+    "SMBSessions": [],
+    "SMBShares": []
 }
 
 # 0. System Info

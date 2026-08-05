@@ -37,6 +37,7 @@ $Results = @{
     RDPConnections = @()
     DNSCache = @()
     SMBSessions = @()
+    SMBShares = @()
     LoggedinUsers = @()
     DockerContainers = @()
     RecycleBin = @()
@@ -722,9 +723,10 @@ try {
 } catch { Write-Warning "Failed to collect DNS Cache: $_" }
 
 try {
-    # 16. Active SMB Sessions
+    # 16. Active SMB Sessions & Shares
     $Results.SMBSessions = Get-SmbSession -ErrorAction SilentlyContinue | Select-Object ClientComputerName, ClientUserName, NumOpens, Dialect, SessionId, IdleTime
-} catch { Write-Warning "Failed to collect SMB Sessions: $_" }
+    $Results.SMBShares = Get-SmbShare -ErrorAction SilentlyContinue | Select-Object Name, ScopeName, Path, Description
+} catch { Write-Warning "Failed to collect SMB Info: $_" }
 
 try {
     # 17. Logged In Users (Interactive / RDP)

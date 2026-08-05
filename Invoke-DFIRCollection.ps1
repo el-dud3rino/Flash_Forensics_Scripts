@@ -895,9 +895,16 @@ $HtmlContent = @'
             if (e) e.stopPropagation();
             const content = btn.previousElementSibling.innerText || btn.previousElementSibling.textContent;
             navigator.clipboard.writeText(content).then(() => {
+                const oldHtml = btn.innerHTML;
                 const oldColor = btn.style.color;
-                btn.style.color = 'var(--accent)';
-                setTimeout(() => { btn.style.color = oldColor; }, 1000);
+                btn.innerHTML = '&#10004; Copied!';
+                btn.style.color = '#28a745'; // Green color for success
+                btn.style.fontSize = '0.8rem';
+                setTimeout(() => { 
+                    btn.innerHTML = oldHtml; 
+                    btn.style.color = oldColor; 
+                    btn.style.fontSize = '1.1rem'; // Revert back to original size
+                }, 1500);
             });
         }
 
@@ -1336,7 +1343,7 @@ $HtmlContent = @'
             
             if (!systemsToSearch[0]) return;
             
-            const categories = ['SystemInfo', 'Processes', 'Services', 'ScheduledTasks', 'NetworkConnections', 'LocalUsers', 'SystemPersistence', 'PrivilegedAccess', 'StartupFiles', 'ExecutionEvidence', 'EventLogs', 'InstalledSoftware', 'FirewallRules', 'RDPConnections', 'DNSCache', 'SMBSessions', 'LoggedinUsers', 'DockerContainers'];
+            const categories = ['SystemInfo', 'Processes', 'Services', 'ScheduledTasks', 'NetworkConnections', 'LocalUsers', 'SystemPersistence', 'PrivilegedAccess', 'StartupFiles', 'ExecutionEvidence', 'EventLogs', 'InstalledSoftware', 'FirewallRules', 'RDPConnections', 'DNSCache', 'SMBSessions', 'SMBShares', 'LoggedinUsers', 'DockerContainers'];
             
             systemsToSearch.forEach((sys, idx) => {
                 const sysBaseName = sys.ComputerName || sys.PSComputerName || `Unknown-${idx}`;
@@ -1529,6 +1536,17 @@ $HtmlContent = @'
                 });
             }
 
+            // 1.5 Apply Known Good Filter
+            const hideKnownGood = document.getElementById('hideKnownGood') ? document.getElementById('hideKnownGood').checked : false;
+            if (hideKnownGood) {
+                let knownGoodHashes = JSON.parse(localStorage.getItem('dfirKnownGoodHashes') || '{}');
+                arr = arr.filter(item => {
+                    if (!item) return false;
+                    const itemHash = hashArtifact(item, currentTab);
+                    return !knownGoodHashes[itemHash];
+                });
+            }
+
             // 2. Apply Mass Filter
             const massFilter = document.getElementById('massFilterInput') ? document.getElementById('massFilterInput').value.trim() : '';
             if (massFilter) {
@@ -1663,6 +1681,7 @@ $HtmlContent = @'
             let html = titleHtml + '<table><thead><tr>';
             if (currentTab !== 'FlaggedItems') {
                 html += '<th style="width:50px; text-align:center;">Flag</th>';
+                html += '<th style="width:50px; text-align:center;">Good</th>';
             }
             if (window.isDiffMode) {
                 let diffFilterVal = columnFilters['_DiffStatus'] || '';
@@ -1727,9 +1746,16 @@ $HtmlContent = @'
                 html += `<tr id="${isHighlighted ? 'highlight-row' : trId}" style="${rowStyle}">`;
                 if (currentTab !== 'FlaggedItems') {
                     if (isFlagged) {
-                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', event)"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;">&#128681;</span></td>`;
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', event)"><span style="cursor:pointer; color:var(--danger); font-size:1.2rem;" title="Flag Item">&#128681;</span></td>`;
                     } else {
-                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', event)"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">&#9873;</span></td>`;
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleFlag('${trId}', event)"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3" title="Flag Item">&#9873;</span></td>`;
+                    }
+                    
+                    let knownGoodHashes = JSON.parse(localStorage.getItem('dfirKnownGoodHashes') || '{}');
+                    if (knownGoodHashes[itemHash]) {
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleKnownGood('${trId}', event)"><span style="cursor:pointer; color:#28a745; font-size:1.2rem;" title="Marked as Known Good">&#10004;</span></td>`;
+                    } else {
+                        html += `<td style="text-align:center; vertical-align:top;" onclick="toggleKnownGood('${trId}', event)"><span style="cursor:pointer; color:var(--text-muted); opacity:0.3; font-size:1.2rem;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3" title="Mark as Known Good">&#10004;</span></td>`;
                     }
                 }
                 
@@ -1776,7 +1802,7 @@ $HtmlContent = @'
                 });
                 html += '</tr>';
                 
-                let colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 1 : keys.length;
+                let colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 2 : keys.length;
                 if (window.isDiffMode) colSpanCount += 1;
                 html += `<tr id="${trId}-exp" style="display:${isHighlighted ? 'table-row' : 'none'}; background: rgba(0,0,0,0.2);">
                            <td colspan="${colSpanCount}" style="padding:15px; border-left: 3px solid var(--accent);">
@@ -1854,6 +1880,11 @@ $HtmlContent = @'
                             const arp = sys['ArpTable'] ? (Array.isArray(sys['ArpTable']) ? sys['ArpTable'] : [sys['ArpTable']]) : [];
                             nc.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'NetworkConnections'; copy._System = hostname; allItems.push(copy); });
                             arp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'ArpTable'; copy._System = hostname; allItems.push(copy); });
+                        } else if (tabName === 'SMBSessions') {
+                            const sess = sys['SMBSessions'] ? (Array.isArray(sys['SMBSessions']) ? sys['SMBSessions'] : [sys['SMBSessions']]) : [];
+                            const shares = sys['SMBShares'] ? (Array.isArray(sys['SMBShares']) ? sys['SMBShares'] : [sys['SMBShares']]) : [];
+                            sess.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'SMBSessions'; copy._System = hostname; allItems.push(copy); });
+                            shares.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'SMBShares'; copy._System = hostname; allItems.push(copy); });
                         } else {
                             let sysData = sys[tabName];
                             if (sysData) {
@@ -1938,6 +1969,15 @@ $HtmlContent = @'
                     if (nc.length > 0) html += buildTableHTML(nc, '<h2 style="color:var(--accent);margin-bottom:10px;">Network Connections (Compare Mode)</h2>', 'net-conns');
                     if (arp.length > 0) html += buildTableHTML(arp, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">ARP Table (Compare Mode)</h2>', 'arp-table');
                     container.innerHTML = html;
+                } else if (tabName === 'SMBSessions') {
+                    const sess = stackedArr.filter(i => i._CompareType === 'SMBSessions');
+                    const shares = stackedArr.filter(i => i._CompareType === 'SMBShares');
+                    sess.forEach(i => { delete i._CompareType; delete i._System; });
+                    shares.forEach(i => { delete i._CompareType; delete i._System; });
+                    
+                    if (sess.length > 0) html += buildTableHTML(sess, '<h2 style="color:var(--accent);margin-bottom:10px;">SMB Sessions (Compare Mode)</h2>', 'smb-sess');
+                    if (shares.length > 0) html += buildTableHTML(shares, '<h2 style="color:var(--accent);margin-top:30px;margin-bottom:10px;">SMB Shares (Compare Mode)</h2>', 'smb-shares');
+                    container.innerHTML = html;
                 } else {
                     stackedArr.forEach(i => { delete i._System; });
                     
@@ -2004,6 +2044,16 @@ $HtmlContent = @'
                     let tarp = targetSys['ArpTable'] ? (Array.isArray(targetSys['ArpTable']) ? targetSys['ArpTable'] : [targetSys['ArpTable']]) : [];
                     tnc.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'NetworkConnections'; tData.push(copy); });
                     tarp.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'ArpTable'; tData.push(copy); });
+                } else if (tabName === 'SMBSessions') {
+                    let bsess = baseSys['SMBSessions'] ? (Array.isArray(baseSys['SMBSessions']) ? baseSys['SMBSessions'] : [baseSys['SMBSessions']]) : [];
+                    let bshares = baseSys['SMBShares'] ? (Array.isArray(baseSys['SMBShares']) ? baseSys['SMBShares'] : [baseSys['SMBShares']]) : [];
+                    bsess.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'SMBSessions'; bData.push(copy); });
+                    bshares.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'SMBShares'; bData.push(copy); });
+                    
+                    let tsess = targetSys['SMBSessions'] ? (Array.isArray(targetSys['SMBSessions']) ? targetSys['SMBSessions'] : [targetSys['SMBSessions']]) : [];
+                    let tshares = targetSys['SMBShares'] ? (Array.isArray(targetSys['SMBShares']) ? targetSys['SMBShares'] : [targetSys['SMBShares']]) : [];
+                    tsess.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'SMBSessions'; tData.push(copy); });
+                    tshares.forEach(i => { let copy = Object.assign({}, i); copy._CompareType = 'SMBShares'; tData.push(copy); });
                 } else {
                     bData = baseSys[tabName] ? (Array.isArray(baseSys[tabName]) ? baseSys[tabName] : [baseSys[tabName]]) : [];
                     tData = targetSys[tabName] ? (Array.isArray(targetSys[tabName]) ? targetSys[tabName] : [targetSys[tabName]]) : [];
@@ -2014,7 +2064,7 @@ $HtmlContent = @'
                 let shouldGroup = false;
                 let groupProp = 'Source';
                 
-                if (tabName === 'Users' || tabName === 'NetworkConnections') { shouldGroup = true; groupProp = '_CompareType'; }
+                if (tabName === 'Users' || tabName === 'NetworkConnections' || tabName === 'SMBSessions') { shouldGroup = true; groupProp = '_CompareType'; }
                 else if (tabName === 'EventLogs' && window.eventLogGroupMode) { shouldGroup = true; groupProp = 'EventId'; }
                 else if (tabName !== 'EventLogs' && arrData.some(i => i && i.Source)) { shouldGroup = true; groupProp = 'Source'; }
                 
@@ -2114,6 +2164,37 @@ $HtmlContent = @'
                     }
                     
                     if (html === '') container.innerHTML = '<div class="empty-state">No network data found.</div>';
+                    else container.innerHTML = html;
+                } else if (tabName === 'SMBSessions') {
+                    const sess = currentComputer['SMBSessions'] ? (Array.isArray(currentComputer['SMBSessions']) ? currentComputer['SMBSessions'] : [currentComputer['SMBSessions']]) : [];
+                    const shares = currentComputer['SMBShares'] ? (Array.isArray(currentComputer['SMBShares']) ? currentComputer['SMBShares'] : [currentComputer['SMBShares']]) : [];
+                    
+                    if (sess.length > 0) {
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('smb-sess'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">SMB Sessions</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="smb-sess">${buildTableHTML(sess, '', 'smb-sess')}</div>
+                        `;
+                    }
+                    if (shares.length > 0) {
+                        html += `
+                            <div style="display:flex; align-items:center; cursor:pointer; margin-top:20px; margin-bottom:10px; padding: 5px; border-radius: 4px; transition: background 0.2s;" 
+                                 onclick="const e = document.getElementById('smb-shares'); e.style.display = e.style.display === 'none' ? 'block' : 'none';"
+                                 onmouseover="this.style.background='rgba(255,255,255,0.05)'"
+                                 onmouseout="this.style.background='transparent'">
+                                <h2 style="color:var(--accent); margin:0; font-size: 1.1rem;">SMB Shares</h2>
+                                <span style="margin-left:10px; color:var(--text-muted); font-size:0.8rem;">(Click to expand/collapse)</span>
+                            </div>
+                            <div id="smb-shares">${buildTableHTML(shares, '', 'smb-shares')}</div>
+                        `;
+                    }
+                    
+                    if (html === '') container.innerHTML = '<div class="empty-state">No SMB data found.</div>';
                     else container.innerHTML = html;
                 } else {
                 const dataArray = currentComputer[tabName];
@@ -2541,6 +2622,22 @@ $HtmlContent = @'
             const flags = getFlaggedItems();
             const str = hashItem(item);
             return flags.some(f => hashItem(f.data) === str);
+        }
+
+        function toggleKnownGood(trId, event) {
+            event.stopPropagation();
+            const itemObj = window.renderedItems[trId];
+            if (!itemObj) return;
+            
+            let knownGoodHashes = JSON.parse(localStorage.getItem('dfirKnownGoodHashes') || '{}');
+            const itemHash = hashArtifact(itemObj.data, currentTab);
+            if (knownGoodHashes[itemHash]) {
+                delete knownGoodHashes[itemHash];
+            } else {
+                knownGoodHashes[itemHash] = true;
+            }
+            localStorage.setItem('dfirKnownGoodHashes', JSON.stringify(knownGoodHashes));
+            renderTable(currentTab);
         }
 
         function toggleFlag(trId, event) {
