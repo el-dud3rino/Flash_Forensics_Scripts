@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Orchestrates the execution of a DFIR collection script across remote systems.
 .DESCRIPTION
@@ -122,26 +122,34 @@ if ($BuildDashboardOnly) {
     foreach ($Comp in $ComputerName) {
         if ($Comp -eq "localhost" -or $Comp -eq "127.0.0.1" -or $Comp -eq $env:COMPUTERNAME -or $Comp -eq '.') {
             Write-Output "Starting local DFIR collection on $($env:COMPUTERNAME)..."
-            $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes -CollectionDays 5 -EventDaysMap $EventDaysMap
-            if ($LocalResult) {
-                $LocalResult | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $env:COMPUTERNAME -Force
-                $Results += $LocalResult
+            try {
+                $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes -CollectionDays 5 -EventDaysMap $EventDaysMap
+                if ($LocalResult) {
+                    $LocalResult | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $env:COMPUTERNAME -Force
+                    $Results += $LocalResult
+                } else {
+                    Write-Warning "Local collection on $($env:COMPUTERNAME) returned no data."
+                }
+            } catch {
+                Write-Warning "Local collection on $($env:COMPUTERNAME) failed: $_"
             }
         } else {
             Write-Output "Checking WinRM connectivity for $Comp..."
             $WinRMOpen = $false
             foreach ($port in @(5985, 5986)) {
+                $tcp = $null
                 try {
                     $tcp = New-Object System.Net.Sockets.TcpClient
                     $async = $tcp.BeginConnect($Comp, $port, $null, $null)
                     $success = $async.AsyncWaitHandle.WaitOne(1000, $true)
                     if ($success -and $tcp.Connected) {
                         $WinRMOpen = $true
-                        $tcp.Close()
                         break
                     }
-                    $tcp.Close()
                 } catch { }
+                finally {
+                    if ($tcp) { $tcp.Close(); $tcp.Dispose() }
+                }
             }
             
             if ($WinRMOpen) {
@@ -433,6 +441,12 @@ foreach ($Result in $Results) {
     
     $LogEntries | Export-Csv -Path $LogFilePath -NoTypeInformation -Append
 }
+}
+
+if ($Results.Count -eq 0) {
+    Write-Warning "No data was collected from any system. Dashboard will not be updated."
+    Write-Output "DFIR Collection Complete. No results to process."
+    exit
 }
 
 Write-Output "Generating HTML Dashboard..."
@@ -1824,7 +1838,6 @@ $HtmlContent = @'
                                     <button style="background:transparent; color:var(--text-main); border:none; text-align:left; cursor:pointer; padding:5px; width:100%; border-radius:3px;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'" onclick="appendFilter('${groupId}-${escapeHtml(k)}', '${escapeHtml(k)}', ' NOT ')">&#10060; NOT Condition</button>
                                 </div>
                             </div>
-                        </th>`;
                         </th>`;
             });
             if (currentTab === 'FlaggedItems') {

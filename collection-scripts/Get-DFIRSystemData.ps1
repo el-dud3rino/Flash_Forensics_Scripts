@@ -43,7 +43,6 @@ $Results = @{
     LoggedinUsers = @()
     DockerContainers = @()
     RecycleBin = @()
-    ComputerName = $env:COMPUTERNAME
     Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
 
@@ -759,7 +758,7 @@ try {
 try {
     # 14. RDP Connections
     $RDPData = @()
-    $StartTime = (Get-Date).AddDays(-$EventLogDays)
+    $StartTime = (Get-Date).AddDays(-$CollectionDays)
     
     # INBOUND RDP (LocalSessionManager)
     $InboundEvents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; Id=21, 24, 25; StartTime=$StartTime} -MaxEvents 50 -ErrorAction SilentlyContinue
