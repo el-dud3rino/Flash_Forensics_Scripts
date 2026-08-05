@@ -19,6 +19,8 @@ if ($EventDaysMap.ContainsKey($env:COMPUTERNAME)) {
 #>
 
 $Results = @{
+    ComputerName = $env:COMPUTERNAME
+    PSComputerName = $env:COMPUTERNAME
     Processes = @()
     Services = @()
     ScheduledTasks = @()
