@@ -145,8 +145,39 @@ if ($BuildDashboardOnly) {
         }
 
         Write-Output "Starting DFIR collection on $(($RemoteComputers).Count) remote systems..."
-        $RemoteResults = Invoke-Command @InvokeParams
+        $InvokeParams.AsJob = $true
+        $Job = Invoke-Command @InvokeParams
         
+        $TotalComps = $RemoteComputers.Count
+        $CompletedComps = @{}
+        
+        while ($Job.State -eq 'Running') {
+            foreach ($Child in $Job.ChildJobs) {
+                if ($Child.State -ne 'Running' -and -not $CompletedComps.ContainsKey($Child.Location)) {
+                    $CompletedComps[$Child.Location] = $true
+                    if ($Child.State -eq 'Completed') {
+                        Write-Output "[$($CompletedComps.Count)/$TotalComps] SUCCESS: $($Child.Location) completed collection."
+                    } else {
+                        Write-Output "[$($CompletedComps.Count)/$TotalComps] FAILED: $($Child.Location) failed with state $($Child.State)."
+                    }
+                }
+            }
+            Start-Sleep -Seconds 2
+        }
+        
+        foreach ($Child in $Job.ChildJobs) {
+            if (-not $CompletedComps.ContainsKey($Child.Location)) {
+                $CompletedComps[$Child.Location] = $true
+                if ($Child.State -eq 'Completed') {
+                    Write-Output "[$($CompletedComps.Count)/$TotalComps] SUCCESS: $($Child.Location) completed collection."
+                } else {
+                    Write-Output "[$($CompletedComps.Count)/$TotalComps] FAILED: $($Child.Location) failed with state $($Child.State)."
+                }
+            }
+        }
+        
+        $RemoteResults = Receive-Job -Job $Job -ErrorVariable InvokeErrors -ErrorAction SilentlyContinue
+        Remove-Job -Job $Job
         $SuccessfulComps = @()
         if ($RemoteResults) {
             $Results += $RemoteResults
@@ -205,10 +236,29 @@ if ($BuildDashboardOnly) {
                 
                 return @{ Comp = $Comp; Output = $JsonOutput; ExitCode = $Process.ExitCode; Error = $ErrorOutput }
             }
-            $Jobs += Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Comp, $PayloadContent, (,$SshArgs)
+            $jobObj = Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Comp, $PayloadContent, (,$SshArgs)
+            $jobObj | Add-Member -NotePropertyName TargetComputer -NotePropertyValue $Comp
+            $Jobs += $jobObj
         }
         
-        $CompletedJobs = $Jobs | Wait-Job
+        $TotalComps = $Jobs.Count
+        $CompletedJobIds = @{}
+        
+        while ($CompletedJobIds.Count -lt $TotalComps) {
+            foreach ($Job in $Jobs) {
+                if ($Job.State -ne 'Running' -and -not $CompletedJobIds.ContainsKey($Job.Id)) {
+                    $CompletedJobIds[$Job.Id] = $true
+                    if ($Job.State -eq 'Completed') {
+                        Write-Output "[$($CompletedJobIds.Count)/$TotalComps] SUCCESS: $($Job.TargetComputer) completed collection."
+                    } else {
+                        Write-Output "[$($CompletedJobIds.Count)/$TotalComps] FAILED: $($Job.TargetComputer) failed with state $($Job.State)."
+                    }
+                }
+            }
+            Start-Sleep -Seconds 2
+        }
+        
+        $CompletedJobs = $Jobs
         foreach ($Job in $CompletedJobs) {
             $Result = Receive-Job -Job $Job
             $Comp = $Result.Comp
@@ -411,6 +461,13 @@ if (Test-Path $NetworkPlaybookPath) { $NetworkPlaybookContent = Get-Content $Net
 $HostPlaybookJson = ConvertTo-Json -InputObject "$HostPlaybookContent" -Compress
 $NetworkPlaybookJson = ConvertTo-Json -InputObject "$NetworkPlaybookContent" -Compress
 
+$PdfPlaybookPath = Join-Path -Path $PSScriptRoot -ChildPath "playbook\SANS_DFPS_FOR508_v4.11_0624.pdf"
+$PdfBase64 = ""
+if (Test-Path $PdfPlaybookPath) {
+    $PdfBytes = [System.IO.File]::ReadAllBytes($PdfPlaybookPath)
+    $PdfBase64 = [Convert]::ToBase64String($PdfBytes)
+}
+
 # Generate HTML Dashboard
 $HtmlPath = Join-Path -Path $PSScriptRoot -ChildPath "index.html"
 $HtmlContent = @'
@@ -594,6 +651,20 @@ $HtmlContent = @'
             width: 100%;
             border-collapse: collapse;
             text-align: left;
+        }
+        .resizer {
+            width: 6px;
+            height: 100%;
+            position: absolute;
+            right: 0;
+            top: 0;
+            cursor: col-resize;
+            user-select: none;
+            background-color: transparent;
+            z-index: 15;
+        }
+        .resizer:hover, .resizing {
+            background-color: var(--accent);
         }
         th {
             background: rgba(0,0,0,0.2);
@@ -799,7 +870,8 @@ $HtmlContent = @'
             <h3 style="color:var(--text-main); margin-top:0; font-size:1rem;">Playbooks</h3>
             <ul style="list-style:none; padding:0; margin:0;">
                 <li style="margin-bottom:5px;"><a href="#" onclick="openPlaybook('Host Analyst')" style="color:var(--accent); text-decoration:none;">Host Analyst Playbook</a></li>
-                <li><a href="#" onclick="openPlaybook('Network Analyst')" style="color:var(--accent); text-decoration:none;">Network Analyst Playbook</a></li>
+                <li style="margin-bottom:5px;"><a href="#" onclick="openPlaybook('Network Analyst')" style="color:var(--accent); text-decoration:none;">Network Analyst Playbook</a></li>
+                <li><a href="/*PDF_BASE64_PLACEHOLDER*/" target="_blank" style="color:var(--accent); text-decoration:none;">SANS FOR508 Cheat Sheet (PDF)</a></li>
             </ul>
         </div>
         
@@ -2770,6 +2842,64 @@ $HtmlContent = @'
             document.body.removeChild(link);
         }
 
+        function initResizers() {
+            const tables = document.querySelectorAll('table');
+            tables.forEach(table => {
+                const ths = table.querySelectorAll('th');
+                ths.forEach(th => {
+                    if (!th.querySelector('.resizer')) {
+                        const resizer = document.createElement('div');
+                        resizer.classList.add('resizer');
+                        th.appendChild(resizer);
+                        
+                        let currentResizer;
+                        let startX, startWidth;
+                        
+                        resizer.addEventListener('mousedown', function(e) {
+                            currentResizer = e.target;
+                            let thItem = currentResizer.parentElement;
+                            startX = e.pageX;
+                            startWidth = thItem.offsetWidth;
+                            
+                            currentResizer.classList.add('resizing');
+                            
+                            function onMouseMove(e) {
+                                const newWidth = startWidth + (e.pageX - startX);
+                                thItem.style.width = newWidth + 'px';
+                                thItem.style.minWidth = newWidth + 'px';
+                                thItem.style.maxWidth = newWidth + 'px';
+                            }
+                            
+                            function onMouseUp() {
+                                currentResizer.classList.remove('resizing');
+                                document.removeEventListener('mousemove', onMouseMove);
+                                document.removeEventListener('mouseup', onMouseUp);
+                                currentResizer = null;
+                            }
+                            
+                            document.addEventListener('mousemove', onMouseMove);
+                            document.addEventListener('mouseup', onMouseUp);
+                        });
+                    }
+                });
+            });
+        }
+
+        const tableObserver = new MutationObserver((mutations) => {
+            let hasNewTable = false;
+            mutations.forEach(m => {
+                if (m.addedNodes.length > 0) hasNewTable = true;
+            });
+            if (hasNewTable) initResizers();
+        });
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            const container = document.getElementById('tableContainer');
+            if (container) {
+                tableObserver.observe(container, { childList: true, subtree: true });
+            }
+        });
+
         document.querySelector('.tab').classList.add('active');
     </script>
 </body>
@@ -2777,6 +2907,11 @@ $HtmlContent = @'
 '@
 
 $HtmlContent = $HtmlContent.Replace('/*PLAYBOOKS_PLACEHOLDER*/', "const playbooks = { `"Host Analyst`": $HostPlaybookJson, `"Network Analyst`": $NetworkPlaybookJson };")
+if ($PdfBase64) {
+    $HtmlContent = $HtmlContent.Replace('/*PDF_BASE64_PLACEHOLDER*/', "data:application/pdf;base64,$PdfBase64")
+} else {
+    $HtmlContent = $HtmlContent.Replace('/*PDF_BASE64_PLACEHOLDER*/', "#")
+}
 
 $HtmlContent | Out-File -FilePath $HtmlPath -Encoding UTF8
 

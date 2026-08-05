@@ -495,12 +495,156 @@ try {
                                     Length = $null
                                     RunCount = 1
                                     Source = "PowerShell History"
+                                    User = $User.Name
                                 }
                             }
                         }
                     }
                 } catch { }
             }
+        }
+    }
+
+    # BAM (Background Activity Moderator)
+    $BAMPath = "HKLM:\SYSTEM\CurrentControlSet\Services\bam\UserSettings"
+    if (Test-Path $BAMPath) {
+        $BAMSIDs = Get-ChildItem -Path $BAMPath -ErrorAction SilentlyContinue
+        foreach ($SIDKey in $BAMSIDs) {
+            $BAMEntries = Get-ItemProperty -Path $SIDKey.PSPath -ErrorAction SilentlyContinue
+            $BAMEntries.PSObject.Properties | Where-Object { $_.Name -match "^\\Device\\" } | ForEach-Object {
+                $ExecTime = $null
+                try {
+                    $bytes = $_.Value
+                    if ($bytes.Count -ge 8) {
+                        $filetime = [System.BitConverter]::ToInt64($bytes, 0)
+                        $ExecTime = [datetime]::FromFileTimeUtc($filetime).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    }
+                } catch {}
+                $Results.ExecutionEvidence += [PSCustomObject]@{
+                    Executable = $_.Name
+                    FileName = "SID: $($SIDKey.PSChildName)"
+                    CreationTime = $null
+                    LastWriteTime = $ExecTime
+                    Length = $null
+                    RunCount = $null
+                    Source = "BAM"
+                }
+            }
+        }
+    }
+
+    # UserAssist
+    $HKUPaths = Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'S-1-5-21-[\d\-]+$' }
+    foreach ($User in $HKUPaths) {
+        $UAPath = "$($User.PSPath)\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"
+        if (Test-Path $UAPath) {
+            $UAGUIDs = Get-ChildItem -Path $UAPath -ErrorAction SilentlyContinue
+            foreach ($GUIDKey in $UAGUIDs) {
+                $CountPath = "$($GUIDKey.PSPath)\Count"
+                if (Test-Path $CountPath) {
+                    $UAEntries = Get-ItemProperty -Path $CountPath -ErrorAction SilentlyContinue
+                    $UAEntries.PSObject.Properties | Where-Object { $_.Name -ne "PSPath" -and $_.Name -ne "PSParentPath" -and $_.Name -ne "PSChildName" -and $_.Name -ne "PSDrive" -and $_.Name -ne "PSProvider" } | ForEach-Object {
+                        $enc = $_.Name
+                        $dec = ""
+                        foreach ($char in $enc.ToCharArray()) {
+                            if (($char -ge 'a' -and $char -le 'm') -or ($char -ge 'A' -and $char -le 'M')) { $dec += [char]([int]$char + 13) }
+                            elseif (($char -ge 'n' -and $char -le 'z') -or ($char -ge 'N' -and $char -le 'Z')) { $dec += [char]([int]$char - 13) }
+                            else { $dec += $char }
+                        }
+                        
+                        $RunTime = $null
+                        $RunCount = $null
+                        try {
+                            $bytes = $_.Value
+                            if ($bytes.Count -ge 72) {
+                                $RunCount = [System.BitConverter]::ToInt32($bytes, 4)
+                                $filetime = [System.BitConverter]::ToInt64($bytes, 60)
+                                if ($filetime -gt 0) {
+                                    $RunTime = [datetime]::FromFileTimeUtc($filetime).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                                }
+                            }
+                        } catch {}
+                        
+                        if ($RunCount -gt 0 -or $RunTime) {
+                            $Results.ExecutionEvidence += [PSCustomObject]@{
+                                Executable = $dec
+                                FileName = $User.PSChildName
+                                CreationTime = $null
+                                LastWriteTime = $RunTime
+                                Length = $null
+                                RunCount = $RunCount
+                                Source = "UserAssist"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # Jump Lists
+    foreach ($User in $GlobalUserDirs) {
+        $AutoDestPath = "$($User.FullName)\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations"
+        if (Test-Path $AutoDestPath) {
+            $AutoDestFiles = Get-ChildItem -Path $AutoDestPath -Filter "*.automaticDestinations-ms" -ErrorAction SilentlyContinue
+            foreach ($ADF in $AutoDestFiles) {
+                $Results.ExecutionEvidence += [PSCustomObject]@{
+                    Executable = $ADF.Name
+                    FileName = $User.Name
+                    CreationTime = $ADF.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    LastWriteTime = $ADF.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    Length = $ADF.Length
+                    RunCount = $null
+                    Source = "JumpList"
+                }
+            }
+        }
+    }
+
+    # Amcache
+    $AmcachePath = "$env:windir\AppCompat\Programs\Amcache.hve"
+    if (Test-Path $AmcachePath) {
+        $AmcacheFile = Get-Item $AmcachePath
+        $Results.ExecutionEvidence += [PSCustomObject]@{
+            Executable = "Amcache.hve (Metadata)"
+            FileName = $AmcacheFile.FullName
+            CreationTime = $AmcacheFile.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            LastWriteTime = $AmcacheFile.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            Length = $AmcacheFile.Length
+            RunCount = $null
+            Source = "Amcache"
+        }
+    }
+
+    # SRUM
+    $SRUMPath = "$env:windir\System32\SRU\SRUDB.dat"
+    if (Test-Path $SRUMPath) {
+        $SRUMFile = Get-Item $SRUMPath
+        $Results.ExecutionEvidence += [PSCustomObject]@{
+            Executable = "SRUDB.dat (Metadata)"
+            FileName = $SRUMFile.FullName
+            CreationTime = $SRUMFile.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            LastWriteTime = $SRUMFile.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            Length = $SRUMFile.Length
+            RunCount = $null
+            Source = "SRUM"
+        }
+    }
+
+    # ShimCache (AppCompatCache)
+    $ShimPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache"
+    if (Test-Path $ShimPath) {
+        $ShimKey = Get-ItemProperty $ShimPath -ErrorAction SilentlyContinue
+        $ShimSize = 0
+        if ($ShimKey.AppCompatCache) { $ShimSize = $ShimKey.AppCompatCache.Length }
+        $Results.ExecutionEvidence += [PSCustomObject]@{
+            Executable = "AppCompatCache (Binary Data)"
+            FileName = "Registry"
+            CreationTime = $null
+            LastWriteTime = $null
+            Length = $ShimSize
+            RunCount = $null
+            Source = "ShimCache"
         }
     }
 } catch {
