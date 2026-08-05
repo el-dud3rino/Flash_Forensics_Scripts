@@ -18,7 +18,7 @@ Flash Forensics operates on a hub-and-spoke model where a central **Orchestrator
 
 ## 2. Windows Data Collection Engine
 
-The orchestrator leverages PowerShell Remoting (`Invoke-Command`) to pass the script block of `Get-DFIRSystemData.ps1` to the target. It executes entirely in memory within the `wsmprovhost.exe` (WinRM Provider Host) process. Execution is handled via **Parallel Background Jobs** (`Start-Job`), allowing asynchronous data collection across hundreds of nodes simultaneously.
+The orchestrator leverages PowerShell Remoting (`Invoke-Command -AsJob`) to pass the script block of `Get-DFIRSystemData.ps1` to the target. To prevent WinRM connection timeouts from silently hanging the script on offline or Linux endpoints, the orchestrator implements a lightning-fast pre-flight TCP socket check on ports 5985 and 5986 with a 1-second timeout. Execution is handled via **Parallel Background Jobs** (`Start-Job` and `Invoke-Command -AsJob`), allowing asynchronous data collection across hundreds of nodes simultaneously with live CLI progress tracking.
 
 ### Dynamic Collection Windows
 The orchestrator parses the existing `data.js` payload to identify previously scanned hosts. It implements a smart temporal filter, requesting **5 days** of historical data (Event Logs, Prefetch, PS History) for new hosts, and only **2 days** for repeat hosts, drastically improving collection speed.
@@ -37,7 +37,7 @@ The orchestrator parses the existing `data.js` payload to identify previously sc
     *   Extracts `BootExecute`, `Userinit`, and `Shell` strings from `Winlogon` and `Session Manager`.
     *   Reads the cleartext source of all known local PowerShell profile locations (e.g., `Microsoft.PowerShell_profile.ps1`).
     *   Polls `Get-BitsTransfer -AllUsers` for persistence via BITS jobs.
-*   **Execution Evidence**: Parses the `C:\Windows\Prefetch\*.pf` directory metadata and reads the `ConsoleHost_history.txt` (PSReadLine history) for every user profile.
+*   **Execution Evidence**: Parses the `C:\Windows\Prefetch\*.pf` directory metadata, queries BAM (Background Activity Moderator) and UserAssist (decoding ROT13) from the registry, gathers metadata for JumpLists, ShimCache, Amcache, and SRUM, and reads the `ConsoleHost_history.txt` (PSReadLine history) for every user profile.
 *   **Recycle Bin**: Enumerates all subdirectories in `C:\$Recycle.Bin` and manually parses the binary `$I` files (supporting both v1 and v2 formats) to extract original file paths, deletion times, and sizes across all user SIDs.
 *   **Firewall Rules**: Uses `netsh advfirewall firewall show rule name=all verbose` and parses the output via Regex grouping, specifically filtering for `Enabled = "Yes"`.
 *   **RDP Connections**:
@@ -109,8 +109,8 @@ When a user selects "Diff Timelines", the dashboard dynamically compares a **Bas
 Users can flag rows for investigation using the 🚩 icon.
 1.  **Interaction**: Clicking the icon triggers `toggleFlag(trId)`.
 2.  **Identification**: A unique composite string is generated: `Hostname|Timestamp|Tab|StringifiedRowData`.
-3.  **Persistence**: This string is pushed into the browser's native `localStorage.getItem('ff_flags')` array. This ensures the flags persist even if the browser is closed or the page is refreshed.
-4.  **Export Engine**: The "Export Flags" logic iterates through `localStorage`, parses the stringified data back into CSV format, generates a virtual Blob URL (`URL.createObjectURL(blob)`), and dynamically clicks a hidden anchor tag to trigger the browser download of `FFS_Flagged_Items.csv`.
+3.  **Persistence**: This string is pushed into the browser's native `localStorage.getItem('ff_flags')` array. Users can also add **Analyst Notes** in the Flagged Items tab, which are saved back into the exact artifact's object in `localStorage`.
+4.  **Export Engine**: The "Export Flags" logic iterates through `localStorage`, parses the stringified data back into CSV format (including the custom Analyst Notes), generates a virtual Blob URL (`URL.createObjectURL(blob)`), and dynamically clicks a hidden anchor tag to trigger the browser download of `FFS_Flagged_Items.csv`.
 
 ---
 

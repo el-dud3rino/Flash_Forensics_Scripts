@@ -128,7 +128,27 @@ if ($BuildDashboardOnly) {
                 $Results += $LocalResult
             }
         } else {
-            $RemoteComputers += $Comp
+            Write-Output "Checking WinRM connectivity for $Comp..."
+            $WinRMOpen = $false
+            foreach ($port in @(5985, 5986)) {
+                try {
+                    $tcp = New-Object System.Net.Sockets.TcpClient
+                    $async = $tcp.BeginConnect($Comp, $port, $null, $null)
+                    $success = $async.AsyncWaitHandle.WaitOne(1000, $true)
+                    if ($success -and $tcp.Connected) {
+                        $WinRMOpen = $true
+                        $tcp.Close()
+                        break
+                    }
+                    $tcp.Close()
+                } catch { }
+            }
+            
+            if ($WinRMOpen) {
+                $RemoteComputers += $Comp
+            } else {
+                Write-Warning "WinRM (Port 5985/5986) is unreachable on $Comp. Skipping to prevent hangs. (Is it a Linux host or offline?)"
+            }
         }
     }
 
@@ -1805,7 +1825,11 @@ $HtmlContent = @'
                                 </div>
                             </div>
                         </th>`;
+                        </th>`;
             });
+            if (currentTab === 'FlaggedItems') {
+                html += '<th style="width:300px; padding:8px 10px; position:relative;">Analyst Notes<div class="resizer"></div></th>';
+            }
             html += '</tr></thead><tbody>';
             
             if (arr.length === 0) {
@@ -1886,10 +1910,23 @@ $HtmlContent = @'
                                  </td>`;
                     }
                 });
+                
+                if (currentTab === 'FlaggedItems') {
+                    const strHash = item._originalHash || '';
+                    const flags = getFlaggedItems();
+                    const flagObj = flags.find(f => hashItem(f.data) === strHash);
+                    const noteStr = flagObj && flagObj.notes ? escapeHtml(flagObj.notes) : '';
+                    
+                    html += `<td style="vertical-align:top; width:300px;">
+                        <textarea class="notes-textarea" data-hash="${escapeHtml(strHash)}" onchange="updateFlaggedNote(this)" placeholder="Add notes here..." style="width:100%; min-width:200px; height:60px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); color:var(--text-main); border-radius:4px; padding:5px; resize:vertical; font-family:inherit; font-size:0.85rem;">${noteStr}</textarea>
+                    </td>`;
+                }
+                
                 html += '</tr>';
                 
                 let colSpanCount = currentTab !== 'FlaggedItems' ? keys.length + 2 : keys.length;
                 if (window.isDiffMode) colSpanCount += 1;
+                if (currentTab === 'FlaggedItems') colSpanCount += 1;
                 html += `<tr id="${trId}-exp" style="display:${isHighlighted ? 'table-row' : 'none'}; background: rgba(0,0,0,0.2);">
                            <td colspan="${colSpanCount}" style="padding:15px; border-left: 3px solid var(--accent);">
                              <div style="max-height:400px; overflow-y:auto; white-space:pre-wrap; font-family:monospace; color:var(--text);">`;
@@ -2693,6 +2730,17 @@ $HtmlContent = @'
         function saveFlaggedItems(items) {
             localStorage.setItem('ffs_flagged_items', JSON.stringify(items));
         }
+
+        function updateFlaggedNote(textarea) {
+            const hash = textarea.getAttribute('data-hash');
+            const note = textarea.value;
+            let flags = getFlaggedItems();
+            const flagObj = flags.find(f => hashItem(f.data) === hash);
+            if (flagObj) {
+                flagObj.notes = note;
+                saveFlaggedItems(flags);
+            }
+        }
         
         function hashItem(item) {
             return JSON.stringify(item);
@@ -2797,6 +2845,7 @@ $HtmlContent = @'
                 const rawData = grouped[cat].map(g => {
                     let d = { 'System': g.system };
                     Object.assign(d, g.data);
+                    d['_originalHash'] = hashItem(g.data);
                     return d;
                 });
                 html += buildTableHTML(rawData, titleHtml, 'flagged-' + cat);
@@ -2814,7 +2863,7 @@ $HtmlContent = @'
             if (flags.length === 0) return;
             
             let csvContent = "data:text/csv;charset=utf-8,";
-            let allKeys = new Set(['System', 'Category']);
+            let allKeys = new Set(['System', 'Category', 'AnalystNotes']);
             flags.forEach(f => {
                 if (f.data) Object.keys(f.data).forEach(k => allKeys.add(k));
             });
@@ -2826,6 +2875,7 @@ $HtmlContent = @'
                 let row = keys.map(k => {
                     if (k === 'System') return `"${(f.system||'').toString().replace(/"/g, '""')}"`;
                     if (k === 'Category') return `"${(f.category||'').toString().replace(/"/g, '""')}"`;
+                    if (k === 'AnalystNotes') return `"${(f.notes||'').toString().replace(/"/g, '""')}"`;
                     let val = f.data[k];
                     if (val === null || val === undefined) val = "";
                     return `"${val.toString().replace(/"/g, '""')}"`;
