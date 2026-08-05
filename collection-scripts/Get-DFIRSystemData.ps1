@@ -835,20 +835,19 @@ try {
 
     $RecycleBinPath = "C:\`$Recycle.Bin"
     if (Test-Path $RecycleBinPath) {
-        $IFiles = Get-ChildItem -Path $RecycleBinPath -Recurse -Force -Filter "`$I*" -ErrorAction SilentlyContinue
-        foreach ($IFile in $IFiles) {
-            $parsed = Parse-IFile -FilePath $IFile.FullName
-            if ($parsed) {
-                $SID = "Unknown"
-                $parts = $IFile.FullName.Split('\')
-                if ($parts.Count -ge 3) { $SID = $parts[2] }
-                
-                $RecycleData += [PSCustomObject]@{
-                    UserSID = $SID
-                    OriginalPath = $parsed.OriginalPath
-                    DeletionTime = $parsed.DeletionTime
-                    Size = $parsed.Size
-                    InfoFile = $IFile.Name
+        $SIDs = Get-ChildItem -Path $RecycleBinPath -Force -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer }
+        foreach ($SIDFolder in $SIDs) {
+            $IFiles = Get-ChildItem -Path $SIDFolder.FullName -Force -Filter "`$I*" -ErrorAction SilentlyContinue
+            foreach ($IFile in $IFiles) {
+                $parsed = Parse-IFile -FilePath $IFile.FullName
+                if ($parsed) {
+                    $RecycleData += [PSCustomObject]@{
+                        UserSID = $SIDFolder.Name
+                        OriginalPath = $parsed.OriginalPath
+                        DeletionTime = $parsed.DeletionTime
+                        Size = $parsed.Size
+                        InfoFile = $IFile.Name
+                    }
                 }
             }
         }

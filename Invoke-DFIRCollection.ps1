@@ -1595,6 +1595,8 @@ $HtmlContent = @'
                             const isMatch = terms.some(t => {
                                 t = t.trim();
                                 if (t === '') return false;
+                                if (t === '[null]' || t === '[empty]') return val === "";
+                                if (t === '![null]' || t === '![empty]') return val !== "";
                                 if (t.startsWith('!')) return !val.includes(t.substring(1).trim());
                                 return val.includes(t);
                             });
@@ -1604,6 +1606,8 @@ $HtmlContent = @'
                             const isMatch = terms.every(t => {
                                 t = t.trim();
                                 if (t === '') return true;
+                                if (t === '[null]' || t === '[empty]') return val === "";
+                                if (t === '![null]' || t === '![empty]') return val !== "";
                                 if (t.startsWith('!')) return !val.includes(t.substring(1).trim());
                                 return val.includes(t);
                             });
@@ -1611,6 +1615,8 @@ $HtmlContent = @'
                         } else {
                             const spaceTerms = filterText.split(/\s+/).filter(t => t.trim() !== '');
                             const spaceMatch = spaceTerms.every(t => {
+                                if (t === '[null]' || t === '[empty]') return val === "";
+                                if (t === '![null]' || t === '![empty]') return val !== "";
                                 if (t.startsWith('!')) {
                                     const excludeText = t.substring(1);
                                     return excludeText === "" ? true : !val.includes(excludeText);
