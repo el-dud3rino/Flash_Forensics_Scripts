@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Orchestrates the execution of a DFIR collection script across remote systems.
 .DESCRIPTION
@@ -943,6 +943,14 @@ $HtmlContent = @'
                     <input type="text" id="searchInput" placeholder="Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
                 </div>
                 <div style="display: flex; align-items: center; gap: 15px;">
+                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;" title="Strips GUIDs, Temp Paths, and Hex suffixes before comparing hashes">
+                        <input type="checkbox" id="normalizeIds" style="margin-right: 6px;" onchange="if(window.isCompareMode || window.isDiffMode) renderTable(currentTab)" checked>
+                        Normalize IDs (Fuzzy Match)
+                    </label>
+                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;" title="Processes will only match based on SHA256 when comparing across systems or diffs">
+                        <input type="checkbox" id="matchProcessSha256" style="margin-right: 6px;" onchange="if((window.isCompareMode || window.isDiffMode) && currentTab === 'Processes') renderTable(currentTab)">
+                        Match Processes by SHA256
+                    </label>
                     <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;">
                         <input type="checkbox" id="searchLatestAllSystems" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
                         Search Latest (All Systems)
@@ -1090,7 +1098,7 @@ $HtmlContent = @'
                 case 'Processes': return ['Name', 'Path', 'CommandLine', 'SHA256', 'Signer'];
                 case 'Services': return ['Name', 'DisplayName', 'PathName', 'StartMode', 'State'];
                 case 'ScheduledTasks': return ['TaskName', 'TaskPath', 'Command', 'Arguments'];
-                case 'NetworkConnections': return ['ProcessName', 'ProcessPath', 'Protocol', 'RemoteAddress', 'RemotePort', 'State', 'IPAddress', 'LinkLayerAddress', 'InterfaceAlias'];
+                case 'NetworkConnections': return ['ProcessName', 'Protocol', 'RemoteAddress', 'RemotePort', 'LocalPort'];
                 case 'Users': return ['Name', 'Enabled'];
                 case 'SystemPersistence': return ['Key', 'ValueName', 'Source'];
                 case 'StartupFiles': return ['Executable', 'Signer', 'Source'];
@@ -1962,21 +1970,47 @@ $HtmlContent = @'
             return html;
         }
 
+        function sanitizeValue(val) {
+            if (typeof val !== 'string') return val;
+            let s = val;
+            s = s.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '{GUID}');
+            s = s.replace(/(temp|tmp)[\/\\][a-zA-Z0-9_-]+/gi, '$1\\{TEMP_FOLDER}');
+            s = s.replace(/_[0-9a-f]{4,6}$/i, '_{HEX}');
+            s = s.replace(/(?:\/|\\)[a-f0-9]{12,64}(?:\/|\\)/gi, '\\{CONTAINER_ID}\\');
+            s = s.replace(/[a-zA-Z]:\\Users\\[^\\]+/gi, 'C:\\Users\\{USER}');
+            return s;
+        }
+
         function hashArtifact(obj, tabName) {
             let clean = {};
+            const normalize = document.getElementById('normalizeIds') && document.getElementById('normalizeIds').checked;
+            const pureSha256 = document.getElementById('matchProcessSha256') && document.getElementById('matchProcessSha256').checked;
+            
+            if (tabName === 'Processes' && pureSha256) {
+                clean['SHA256'] = obj['SHA256'] || obj['Name'];
+                return JSON.stringify(clean);
+            }
+
             let keys = window.compareGroupKeys[tabName] || [];
             if (keys.length === 0) {
                 Object.keys(obj).sort().forEach(k => {
                     if (k !== '_System' && k !== '_CompareType' && k !== 'Count' && k !== 'Seen On' && k !== '_DiffStatus') {
                         let val = obj[k];
                         if (val && typeof val === 'object' && val.value_enum !== undefined && val.Value !== undefined) val = val.Value;
+                        if (normalize) val = sanitizeValue(val);
                         clean[k] = val;
                     }
                 });
             } else {
                 keys.forEach(k => {
+                    if (tabName === 'NetworkConnections' && k === 'LocalPort') {
+                        if (obj['State'] !== 'Listening' && obj['RemoteAddress'] && obj['RemoteAddress'] !== '0.0.0.0' && obj['RemoteAddress'] !== '::') {
+                            return;
+                        }
+                    }
                     let val = obj[k] !== undefined ? obj[k] : null;
                     if (val && typeof val === 'object' && val.value_enum !== undefined && val.Value !== undefined) val = val.Value;
+                    if (normalize) val = sanitizeValue(val);
                     clean[k] = val;
                 });
             }
