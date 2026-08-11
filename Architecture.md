@@ -29,7 +29,9 @@ The orchestrator parses the existing `data.js` payload to identify previously sc
 *   **Services**: Uses `Get-CimInstance Win32_Service`.
 *   **Scheduled Tasks**: Leverages the native ScheduledTasks module (`Get-ScheduledTask` and `Get-ScheduledTaskInfo`).
 *   **Network Connections**: Uses `Get-NetTCPConnection` and `Get-NetUDPEndpoint`. Connections are internally mapped back to their owning processes by joining against the previously collected `Win32_Process` array based on `OwningProcess` / `ProcessId`.
-*   **Local Users**: Uses `Get-LocalUser` and `Get-LocalGroupMember` (for the "Administrators" and "Remote Desktop Users" groups).
+*   **ARP Table**: Leverages `Get-NetNeighbor` to collect IPv4 ARP cache entries.
+*   **Local Users**: Uses `Get-LocalUser`.
+*   **Privileged Access**: Uses `Get-LocalGroupMember` to enumerate members of the "Administrators" and "Remote Desktop Users" groups.
 *   **System Persistence**:
     *   Iterates through standard registry hives: `HKLM:\Software\Microsoft\Windows\CurrentVersion\Run` and `RunOnce`.
     *   Mounts the `HKEY_USERS` drive dynamically via `New-PSDrive` to read startup keys for actively loaded user profiles (`S-1-5-21-*`).
@@ -37,14 +39,16 @@ The orchestrator parses the existing `data.js` payload to identify previously sc
     *   Extracts `BootExecute`, `Userinit`, and `Shell` strings from `Winlogon` and `Session Manager`.
     *   Reads the cleartext source of all known local PowerShell profile locations (e.g., `Microsoft.PowerShell_profile.ps1`).
     *   Polls `Get-BitsTransfer -AllUsers` for persistence via BITS jobs.
+*   **USB History**: Enumerates historical USB device connections via the `HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR` registry key.
 *   **Execution Evidence**: Parses the `C:\Windows\Prefetch\*.pf` directory metadata, queries BAM (Background Activity Moderator) and UserAssist (decoding ROT13) from the registry, gathers metadata for JumpLists, ShimCache, Amcache, and SRUM, and reads the `ConsoleHost_history.txt` (PSReadLine history) for every user profile.
 *   **Recycle Bin**: Enumerates all subdirectories in `C:\$Recycle.Bin` and manually parses the binary `$I` files (supporting both v1 and v2 formats) to extract original file paths, deletion times, and sizes across all user SIDs.
+*   **Installed Software**: Queries uninstall registry keys under `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` and `Wow6432Node`, as well as `HKCU`.
 *   **Firewall Rules**: Uses `netsh advfirewall firewall show rule name=all verbose` and parses the output via Regex grouping, specifically filtering for `Enabled = "Yes"`.
 *   **RDP Connections**:
     *   **Inbound**: Queries `Microsoft-Windows-TerminalServices-LocalSessionManager/Operational` (Event IDs `21`, `24`, `25`).
     *   **Outbound**: Queries `Microsoft-Windows-TerminalServices-RDPClient/Operational` (Event ID `1024`) and parses the `Terminal Server Client\Servers` registry key for all users.
 *   **DNS Cache**: Leverages `Get-DnsClientCache`. Implements a graceful fallback to raw text parsing of `ipconfig /displaydns` for older operating systems or constrained remote WinRM runspaces where the cmdlet fails.
-*   **SMB Sessions**: Leverages `Get-SmbSession`.
+*   **SMB Sessions & Shares**: Leverages `Get-SmbSession` and `Get-SmbShare`.
 *   **Active Logged In Users**: Bypasses the WMI abstraction layer and directly executes `quser.exe` (checking both `System32` and `sysnative` to support 32-bit remote runspaces), parsing the column output for Interactive/RDP sessions. If no interactive sessions exist (common on headless remote servers), it falls back to querying `Win32_ComputerSystem.UserName` to map the primary console user.
 *   **Docker Containers**: Checks for the existence of `docker` and runs `docker ps -a --format '{{json .}}'` to collect container state and port mappings.
 *   **Event Logs (High Value Filter)**: Uses `Get-WinEvent` targeting `Security`, `System`, and `PowerShell/Operational` logs. Explicitly extracts:
@@ -70,7 +74,9 @@ The Python payload relies heavily on executing native Linux binaries via `subpro
 *   **Processes**: Parses `ps -eo pid,ppid,user,start_time,command`.
 *   **Services**: Parses `systemctl list-unit-files` for all `enabled` or `active` services.
 *   **Network Connections**: Parses `ss -tupan` or fallbacks to `netstat -tupan`.
+*   **ARP Table**: Parses `ip neigh show` or fallbacks to `arp -an`.
 *   **Local Users**: Directly reads `/etc/passwd`.
+*   **Privileged Access**: Parses `/etc/sudoers` for explicit configurations and `/etc/group` for members of the `sudo` and `wheel` groups.
 *   **System Persistence**: Reads the raw contents of `rc.local`, `.bashrc`, `.bash_profile`, and `.ssh/authorized_keys` for all users in `/home/` and `/root/`. Parses `crontab -l` for users and dumps `/etc/cron.*` directories.
 *   **Execution Evidence**: Reads `.bash_history` for all users and parses `/var/log/auth.log` or `/var/log/secure` for `sudo` command executions.
 *   **Recycle Bin**: Parses `.local/share/Trash/info/*.trashinfo` files across all user home directories defined in `/etc/passwd` to extract original file paths and deletion dates.
