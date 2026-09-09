@@ -203,7 +203,20 @@ If your environment blocks `.ps1` files (an ExecutionPolicy of `Restricted` or `
   ```
 - If `powershell -ExecutionPolicy Bypass -File .\tools\ff-ai-proxy.ps1` works for you (i.e., the policy isn't locked by Group Policy), that's fine too.
 
-These same techniques run any `.ps1` in the project. Note: if the system additionally enforces **Constrained Language Mode** (WDAC/AppLocker), the proxy's .NET calls may be blocked no matter how you launch it — in that case use the Python proxy (`python tools/ff-ai-proxy.py`), or use a provider that needs no proxy (Anthropic/OpenAI/Gemini).
+These same techniques run any `.ps1` in the project. Note: if the system additionally enforces **Constrained Language Mode** (WDAC/AppLocker), the proxy's .NET calls (`HttpListener`) are blocked no matter how you launch it — in that case use the copy-paste PowerShell option below (or the Python proxy, if Python is available).
+
+### Constrained Language Mode / no proxy: copy-paste PowerShell
+
+On the most locked-down networks the proxy cannot run at all — **Constrained Language Mode** (WDAC/AppLocker) blocks the .NET calls it needs — while the browser still cannot reach GenAI.mil directly (CORS). For exactly this case, the Ask AI popover has a **📋 Copy as PowerShell command** button:
+
+1. Set your endpoint/model/key in **AI Settings**, type a question, and pick a context scope.
+2. Click **Copy as PowerShell command**. It builds an `Invoke-RestMethod` call — your endpoint, model, key, and the selected data as the request body — and copies it to your clipboard (it is also shown in a box to copy manually).
+3. Paste it into a PowerShell window and run it. The AI's answer prints in the terminal.
+
+This works because `Invoke-RestMethod` is a **cmdlet** (so it runs in Constrained Language Mode) and PowerShell is **not a browser** (so CORS does not apply) — verified working under CLM. Two things to keep in mind:
+
+- The generated command **contains your API key**, so it lands in your clipboard and PowerShell history — treat it accordingly.
+- The selected data is embedded in the command, so keep the **context scope small** (e.g. *current host + current tab*) so the command is not too large to paste.
 
 ### GenAI.mil key locking
 

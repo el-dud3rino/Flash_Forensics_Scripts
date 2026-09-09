@@ -2366,6 +2366,64 @@
 
         function aiRetry(i){ const e = window.aiConversation[i]; if (e) aiSend(e); }
 
+        // ---- Copy-paste PowerShell (Invoke-RestMethod) fallback ----
+        // For locked networks where the browser can't call the gateway (no CORS) and
+        // the local proxy can't run (Constrained Language Mode blocks HttpListener).
+        // Invoke-RestMethod is a cmdlet, so it works in CLM, and PowerShell is not a
+        // browser, so CORS does not apply.
+        function aiPsEsc(s){ return String(s == null ? '' : s).replace(/'/g, "''"); } // PowerShell single-quote escaping
+        function aiBuildPsCommand(){
+            const provider = document.getElementById('aiProvider').value;
+            const preset = AI_PRESETS[provider] || AI_PRESETS.custom;
+            const url = document.getElementById('aiBaseUrl').value.trim();
+            const model = document.getElementById('aiModel').value.trim();
+            const key = document.getElementById('aiKey').value;
+            const q = document.getElementById('aiQuestion').value.trim();
+            const scope = document.getElementById('aiScope').value;
+            if (!url || !model){ return { err: 'Set a Base URL and Model in AI Settings first.' }; }
+            if (!q){ return { err: 'Type a question.' }; }
+            const ctx = aiBuildContext(scope);
+            if (!ctx.data){ return { err: ctx.label + '. Select a host from the sidebar, or choose "Everything loaded".' }; }
+            const userText = 'QUESTION:\n' + q + '\n\nDATA (' + ctx.label + '):\n```json\n' + JSON.stringify(ctx.data) + '\n```';
+            let body, headers, resultExpr;
+            if (preset.format === 'anthropic'){
+                body = JSON.stringify({ model: model, max_tokens: 4096, system: AI_SYSTEM_PROMPT, messages: [{ role: 'user', content: userText }] });
+                headers = "@{ 'x-api-key' = '" + aiPsEsc(key || 'YOUR_API_KEY') + "'; 'anthropic-version' = '2023-06-01' }";
+                resultExpr = '$r.content[0].text';
+            } else {
+                body = JSON.stringify({ model: model, messages: [{ role: 'system', content: AI_SYSTEM_PROMPT }, { role: 'user', content: userText }] });
+                headers = "@{ Authorization = 'Bearer " + aiPsEsc(key || 'YOUR_API_KEY') + "' }";
+                resultExpr = '$r.choices[0].message.content';
+            }
+            // Single-quoted here-string keeps the JSON literal (compact JSON is one line,
+            // so nothing inside can start a line with the '@ terminator).
+            const cmd =
+                "$body = @'\n" + body + "\n'@\n" +
+                "$r = Invoke-RestMethod -Uri '" + aiPsEsc(url) + "' -Method Post -ContentType 'application/json' -Headers " + headers + " -Body $body\n" +
+                resultExpr;
+            return { cmd: cmd, chars: cmd.length };
+        }
+        function aiCopyPowerShell(){
+            const errEl = document.getElementById('aiError'); errEl.textContent = '';
+            const out = aiBuildPsCommand();
+            if (out.err){ errEl.textContent = out.err; return; }
+            aiSaveSettings();
+            const ta = document.getElementById('aiPsText');
+            ta.value = out.cmd;
+            const note = document.getElementById('aiPsNote');
+            if (note) note.textContent = 'Paste into PowerShell and run (works in Constrained Language Mode; no browser/CORS). ~' + out.chars.toLocaleString() + ' chars; includes your API key.';
+            document.getElementById('aiPsBox').style.display = 'block';
+            aiCopyPsAgain();
+        }
+        function aiCopyPsAgain(){
+            const ta = document.getElementById('aiPsText');
+            if (!ta) return;
+            ta.focus(); ta.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch(e){}
+            if (!ok && navigator.clipboard){ try { navigator.clipboard.writeText(ta.value); } catch(e){} }
+        }
+
         function aiRenderConversation(){
             const box = document.getElementById('aiConversation');
             if (!box) return;
@@ -2455,6 +2513,12 @@
             +   '<button onclick="aiAsk()" style="padding:10px 20px; background:#6d28d9; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:bold; white-space:nowrap;">Ask &#129302;</button>'
             + '</div>'
             + '<div style="font-size:0.72rem; color:var(--text-muted); margin-top:6px;">Ctrl/Cmd+Enter to send. This is the only feature that makes a network call &mdash; the rest of the dashboard stays fully offline.</div>'
+            + '<div style="margin-top:8px;"><button onclick="aiCopyPowerShell()" title="Build an Invoke-RestMethod command to paste into PowerShell (for Constrained Language Mode / locked networks where the browser and proxy are blocked)" style="padding:6px 12px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">&#128203; Copy as PowerShell command</button></div>'
+            + '<div id="aiPsBox" style="display:none; margin-top:8px;">'
+            +   '<div id="aiPsNote" style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;"></div>'
+            +   '<textarea id="aiPsText" readonly rows="6" onclick="this.select()" style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.72rem; padding:8px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;"></textarea>'
+            +   '<button onclick="aiCopyPsAgain()" style="margin-top:6px; padding:5px 12px; background:var(--accent); color:white; border:none; border-radius:4px; cursor:pointer;">Copy again</button>'
+            + '</div>'
             + '</div>';
 
             aiRenderConversation();
