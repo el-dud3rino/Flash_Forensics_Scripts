@@ -985,6 +985,8 @@ $HtmlContent = @'
             <div class="tab" data-tab="SMBSessions" onclick="switchTab('SMBSessions')">SMB</div>
             <div class="tab" data-tab="LoggedinUsers" onclick="switchTab('LoggedinUsers')">Logged In</div>
             <div class="tab" data-tab="DockerContainers" onclick="switchTab('DockerContainers')">Docker</div>
+            <div class="tab" data-tab="Drivers" onclick="switchTab('Drivers')">Drivers</div>
+            <div class="tab" data-tab="DefenderSecurity" onclick="switchTab('DefenderSecurity')">Defender</div>
             <div class="tab" data-tab="ProcessTree" style="background: var(--accent); color: white;" onclick="switchTab('ProcessTree')">Process Tree</div>
             <div class="tab" data-tab="Timeline" style="background: var(--accent); color: white;" onclick="switchTab('Timeline')">Timeline</div>
             <div class="tab" data-tab="FlaggedItems" onclick="switchTab('FlaggedItems')" style="color: var(--danger); font-weight: bold;">&#128681; Flagged</div>
@@ -1516,7 +1518,7 @@ $HtmlContent = @'
             
             if (!systemsToSearch[0]) return;
             
-            const categories = ['SystemInfo', 'Processes', 'Services', 'ScheduledTasks', 'NetworkConnections', 'LocalUsers', 'SystemPersistence', 'PrivilegedAccess', 'StartupFiles', 'ExecutionEvidence', 'EventLogs', 'InstalledSoftware', 'FirewallRules', 'RDPConnections', 'DNSCache', 'SMBSessions', 'SMBShares', 'LoggedinUsers', 'DockerContainers'];
+            const categories = ['SystemInfo', 'Processes', 'Services', 'ScheduledTasks', 'NetworkConnections', 'LocalUsers', 'SystemPersistence', 'PrivilegedAccess', 'StartupFiles', 'ExecutionEvidence', 'EventLogs', 'InstalledSoftware', 'FirewallRules', 'RDPConnections', 'DNSCache', 'SMBSessions', 'SMBShares', 'LoggedinUsers', 'DockerContainers', 'Drivers', 'DefenderSecurity'];
             
             systemsToSearch.forEach((sys, idx) => {
                 const sysBaseName = sys.ComputerName || sys.PSComputerName || `Unknown-${idx}`;
