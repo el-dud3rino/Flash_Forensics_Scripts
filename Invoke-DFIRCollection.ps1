@@ -932,6 +932,7 @@ $HtmlContent = @'
             <div class="search-container" style="display: flex; align-items: center; gap: 10px;">
                 <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." onkeydown="if(event.key === 'Enter') renderTable(currentTab)" style="border:1px solid var(--glass-border); border-radius:4px; padding:6px 10px; background:var(--bg-color); color:var(--text-main); width: 180px;">
                 <input type="text" id="searchInput" placeholder="&#128269; Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:6px 10px; background:var(--bg-color); color:var(--text-main); width: 200px;">
+                <button id="askAiBtn" onclick="toggleAskAI()" title="Ask AI about the data on the current tab" style="background:#6d28d9; color:white; border:1px solid #6d28d9; border-radius:4px; padding:6px 12px; cursor:pointer; white-space:nowrap;">&#129302; Ask AI</button>
                 <div style="position: relative;">
                     <button id="headerOptionsBtn" onclick="toggleHeaderOptions()" title="View &amp; search options" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:6px 12px; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:6px;">&#9881; Options &#9662;</button>
                     <div id="headerOptionsMenu" style="display:none; position:fixed; background:var(--bg-color); border:1px solid var(--glass-border); border-radius:6px; padding:10px 14px; z-index:1000; box-shadow:0 6px 18px rgba(0,0,0,0.5); min-width:260px; max-height:80vh; overflow-y:auto; text-align:left;">
@@ -989,7 +990,6 @@ $HtmlContent = @'
             <div class="tab" data-tab="DefenderSecurity" onclick="switchTab('DefenderSecurity')">Defender</div>
             <div class="tab" data-tab="ProcessTree" style="background: var(--accent); color: white;" onclick="switchTab('ProcessTree')">Process Tree</div>
             <div class="tab" data-tab="Timeline" style="background: var(--accent); color: white;" onclick="switchTab('Timeline')">Timeline</div>
-            <div class="tab" data-tab="AskAI" style="background: #6d28d9; color: white;" onclick="switchTab('AskAI')">&#129302; Ask AI</div>
             <div class="tab" data-tab="FlaggedItems" onclick="switchTab('FlaggedItems')" style="color: var(--danger); font-weight: bold;">&#128681; Flagged</div>
             <div class="tab" data-tab="SearchResults" id="tabSearchResults" style="display: none;" onclick="switchTab('SearchResults')">Search Results</div>
         </div>
@@ -1637,8 +1637,6 @@ $HtmlContent = @'
                     renderTimeline();
                 } else if (tabId === 'ProcessTree') {
                     renderProcessTree();
-                } else if (tabId === 'AskAI') {
-                    renderAskAI();
                 } else if (tabId === 'FlaggedItems') {
                     renderFlaggedItems();
                 } else {
@@ -2619,7 +2617,9 @@ $HtmlContent = @'
             const tabKeyMap = {
                 'Users': ['LocalUsers','PrivilegedAccess'],
                 'NetworkConnections': ['NetworkConnections','ArpTable'],
-                'SMBSessions': ['SMBSessions','SMBShares']
+                'SMBSessions': ['SMBSessions','SMBShares'],
+                'ProcessTree': ['Processes'],
+                'Timeline': ['Processes','ScheduledTasks','ExecutionEvidence','EventLogs']
             };
             const keys = tabKeyMap[currentTab] || [currentTab];
             const slice = { _host: ident };
@@ -2636,8 +2636,8 @@ $HtmlContent = @'
             const chars = JSON.stringify(ctx.data).length;
             const estTokens = Math.round(chars/4);
             let warn = '';
-            if (chars > 500000) warn = '  ⚠ Large — may exceed the model context window.';
-            el.textContent = 'Context: ' + ctx.label + ' — ~' + chars.toLocaleString() + ' chars (~' + estTokens.toLocaleString() + ' tokens).' + warn;
+            if (chars > 500000) warn = '  (!) Large - may exceed the model context window.';
+            el.textContent = 'Context: ' + ctx.label + ' - ~' + chars.toLocaleString() + ' chars (~' + estTokens.toLocaleString() + ' tokens).' + warn;
         }
 
         async function aiCallLLM(cfg, systemPrompt, userText){
@@ -2717,7 +2717,7 @@ $HtmlContent = @'
                 h += '<div style="margin-bottom:16px;">';
                 h += '<div style="background:rgba(109,40,217,0.15); border:1px solid #6d28d9; border-radius:8px; padding:10px 12px; margin-bottom:6px;"><strong style="color:#a78bfa;">You</strong> <span style="color:var(--text-muted); font-size:0.75rem;">(' + aiEsc(e.scope) + ')</span><div style="white-space:pre-wrap; margin-top:4px;">' + aiEsc(e.q) + '</div></div>';
                 if (e.pending){
-                    h += '<div style="padding:10px 12px; color:var(--text-muted);"><span style="display:inline-block; width:14px; height:14px; border:2px solid var(--glass-border); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle;"></span> Thinking…</div>';
+                    h += '<div style="padding:10px 12px; color:var(--text-muted);"><span style="display:inline-block; width:14px; height:14px; border:2px solid var(--glass-border); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle;"></span> Thinking...</div>';
                 } else if (e.error){
                     h += '<div style="background:rgba(220,38,38,0.12); border:1px solid var(--danger); border-radius:8px; padding:10px 12px; color:#fca5a5; white-space:pre-wrap;"><strong>Error:</strong> ' + aiEsc(e.error) + '</div>';
                 } else {
@@ -2731,8 +2731,7 @@ $HtmlContent = @'
 
         function aiClearConversation(){ window.aiConversation = []; aiRenderConversation(); }
 
-        function renderAskAI(){
-            const container = document.getElementById('tableContainer');
+        function aiBuildPanel(container){
             const provider = aiGet('ff_ai_provider','anthropic');
             const preset = AI_PRESETS[provider] || AI_PRESETS.anthropic;
             const baseUrl = aiGet('ff_ai_baseurl', preset.url);
@@ -2742,7 +2741,8 @@ $HtmlContent = @'
             Object.keys(AI_PRESETS).forEach(function(k){ opts += '<option value="'+k+'"'+(k===provider?' selected':'')+'>'+aiEsc(AI_PRESETS[k].label)+'</option>'; });
 
             container.innerHTML =
-            '<div style="max-width:1000px;">'
+            '<div style="padding:16px;">'
+            + '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;"><strong style="font-size:1.05rem; color:var(--text-main);">&#129302; Ask AI</strong><button onclick="toggleAskAI()" title="Close" style="background:none; border:none; color:var(--text-muted); font-size:1.4rem; cursor:pointer; line-height:1; padding:0 4px;">&times;</button></div>'
             + '<details style="margin-bottom:16px; background:rgba(0,0,0,0.2); border:1px solid var(--glass-border); border-radius:8px; padding:12px 16px;"'+(key?'':' open')+'>'
             +   '<summary style="cursor:pointer; font-weight:bold; color:var(--accent);">&#9881; AI Settings (endpoint &amp; key)</summary>'
             +   '<div style="margin-top:12px; display:grid; grid-template-columns: 140px 1fr; gap:10px 12px; align-items:center;">'
@@ -2773,7 +2773,7 @@ $HtmlContent = @'
             +   '<button onclick="aiClearConversation()" style="margin-left:auto; padding:6px 12px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">Clear conversation</button>'
             + '</div>'
             + '<div id="aiSizeReadout" style="font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;"></div>'
-            + '<div id="aiConversation" style="max-height:45vh; overflow-y:auto; border:1px solid var(--glass-border); border-radius:8px; padding:12px; margin-bottom:12px; background:rgba(0,0,0,0.1);"></div>'
+            + '<div id="aiConversation" style="max-height:300px; overflow-y:auto; border:1px solid var(--glass-border); border-radius:8px; padding:12px; margin-bottom:12px; background:rgba(0,0,0,0.1);"></div>'
             + '<div id="aiError" style="color:#fca5a5; margin-bottom:8px; font-size:0.85rem;"></div>'
             + '<div style="display:flex; gap:10px; align-items:flex-end;">'
             +   '<textarea id="aiQuestion" rows="2" placeholder="e.g. Which running processes are unsigned or carry a download marker? Any suspicious persistence?" onkeydown="if(event.key===\'Enter\' && (event.ctrlKey||event.metaKey)){ aiAsk(); }" style="flex:1; padding:8px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; resize:vertical; font-family:inherit;"></textarea>'
@@ -2785,6 +2785,36 @@ $HtmlContent = @'
             aiRenderConversation();
             aiUpdateSizeReadout();
         }
+
+        // Ask AI is a floating popover so it overlays the current data tab without
+        // changing currentTab (which the "current tab" context scope depends on).
+        function toggleAskAI(){
+            let panel = document.getElementById('askAiPanel');
+            if (panel && panel.style.display === 'block'){ panel.style.display = 'none'; return; }
+            if (!panel){
+                panel = document.createElement('div');
+                panel.id = 'askAiPanel';
+                panel.style.cssText = 'position:fixed; z-index:1000; width:min(560px,94vw); max-height:82vh; overflow-y:auto; background:var(--bg-color); border:1px solid var(--glass-border); border-radius:10px; box-shadow:0 12px 32px rgba(0,0,0,0.6);';
+                document.body.appendChild(panel);
+            }
+            aiBuildPanel(panel);
+            const btn = document.getElementById('askAiBtn');
+            const rect = btn ? btn.getBoundingClientRect() : null;
+            panel.style.top = (rect ? rect.bottom + 6 : 70) + 'px';
+            panel.style.right = (rect ? Math.max(8, window.innerWidth - rect.right) : 16) + 'px';
+            panel.style.left = 'auto';
+            panel.style.display = 'block';
+            aiRenderConversation();
+            aiUpdateSizeReadout();
+            const qEl = document.getElementById('aiQuestion'); if (qEl) qEl.focus();
+        }
+        // Close the Ask AI popover on outside click
+        document.addEventListener('click', function(e){
+            const panel = document.getElementById('askAiPanel');
+            const btn = document.getElementById('askAiBtn');
+            if (!panel || panel.style.display !== 'block') return;
+            if (!panel.contains(e.target) && btn && !btn.contains(e.target)){ panel.style.display = 'none'; }
+        });
 
         function renderTimeline() {
             const container = document.getElementById('tableContainer');
