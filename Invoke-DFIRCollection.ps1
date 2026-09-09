@@ -2608,6 +2608,8 @@ $HtmlContent = @'
             aiSet('ff_ai_baseurl', document.getElementById('aiBaseUrl').value.trim());
             aiSet('ff_ai_model', document.getElementById('aiModel').value.trim());
             aiSet('ff_ai_key', document.getElementById('aiKey').value);
+            const px = document.getElementById('aiUseProxy');
+            aiSet('ff_ai_proxy', (px && px.checked) ? '1' : '');
             const s = document.getElementById('aiSettingsStatus');
             if (s){ s.textContent = 'Saved to this browser.'; setTimeout(function(){ s.textContent=''; }, 2500); }
         }
@@ -2633,7 +2635,8 @@ $HtmlContent = @'
                 : { 'authorization': 'Bearer ' + key };
             statusEl.textContent = 'Loading models...';
             try {
-                const res = await fetch(modelsUrl, { method: 'GET', headers: headers });
+                const p = aiProxied(modelsUrl);
+                const res = await fetch(p.url, { method: 'GET', headers: Object.assign({}, headers, p.extra) });
                 if (!res.ok){ throw await aiHttpError(res); }
                 const data = await res.json();
                 const raw = data.data || data.models || [];
@@ -2694,6 +2697,14 @@ $HtmlContent = @'
             el.textContent = 'Context: ' + ctx.label + ' - ~' + chars.toLocaleString() + ' chars (~' + estTokens.toLocaleString() + ' tokens).' + warn;
         }
 
+        // Route requests through the local proxy (tools/ff-ai-proxy.py) for gateways
+        // that do not send CORS headers (e.g. GenAI.mil). Same-origin -> no CORS.
+        function aiProxied(realUrl){
+            const el = document.getElementById('aiUseProxy');
+            if (el && el.checked){ return { url: '/__ai_proxy', extra: { 'X-FF-Target': realUrl } }; }
+            return { url: realUrl, extra: {} };
+        }
+
         // Turns a non-OK response into an Error, extracting a GenAI.mil-style
         // { error: { unlock_url } } (keys are auto-locked every 8 hours).
         async function aiHttpError(res){
@@ -2712,23 +2723,25 @@ $HtmlContent = @'
 
         async function aiCallLLM(cfg, systemPrompt, userText){
             if (cfg.format === 'anthropic'){
-                const res = await fetch(cfg.url, {
+                const p = aiProxied(cfg.url);
+                const res = await fetch(p.url, {
                     method: 'POST',
-                    headers: {
+                    headers: Object.assign({
                         'content-type': 'application/json',
                         'x-api-key': cfg.key,
                         'anthropic-version': '2023-06-01',
                         'anthropic-dangerous-direct-browser-access': 'true'
-                    },
+                    }, p.extra),
                     body: JSON.stringify({ model: cfg.model, max_tokens: 4096, system: systemPrompt, messages: [{ role: 'user', content: userText }] })
                 });
                 if (!res.ok){ throw await aiHttpError(res); }
                 const data = await res.json();
                 return (data.content || []).filter(function(b){ return b.type === 'text'; }).map(function(b){ return b.text; }).join('\n').trim() || '(empty response)';
             } else {
-                const res = await fetch(cfg.url, {
+                const p = aiProxied(cfg.url);
+                const res = await fetch(p.url, {
                     method: 'POST',
-                    headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + cfg.key },
+                    headers: Object.assign({ 'content-type': 'application/json', 'authorization': 'Bearer ' + cfg.key }, p.extra),
                     body: JSON.stringify({ model: cfg.model, max_tokens: 4096, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userText }] })
                 });
                 if (!res.ok){ throw await aiHttpError(res); }
@@ -2824,6 +2837,7 @@ $HtmlContent = @'
             const baseUrl = aiGet('ff_ai_baseurl', preset.url);
             const model = aiGet('ff_ai_model', preset.model);
             const key = aiGet('ff_ai_key','');
+            const useProxy = aiGet('ff_ai_proxy','') === '1';
             let opts = '';
             Object.keys(AI_PRESETS).forEach(function(k){ opts += '<option value="'+k+'"'+(k===provider?' selected':'')+'>'+aiEsc(AI_PRESETS[k].label)+'</option>'; });
 
@@ -2853,8 +2867,10 @@ $HtmlContent = @'
             +       '<button onclick="aiClearKey()" style="padding:6px 14px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">Clear Key</button>'
             +       '<span id="aiSettingsStatus" style="color:var(--text-muted); font-size:0.8rem;"></span>'
             +     '</div>'
+            +     '<div></div>'
+            +     '<label style="display:flex; align-items:center; cursor:pointer; font-size:0.82rem; color:var(--text-main);"><input type="checkbox" id="aiUseProxy"'+(useProxy?' checked':'')+' style="margin-right:8px;"> Route through local proxy (for gateways without CORS, e.g. GenAI.mil)</label>'
             +   '</div>'
-            +   '<div style="margin-top:10px; font-size:0.78rem; color:var(--text-muted); line-height:1.5;">&#128274; Your key is stored only in <em>this browser</em> (localStorage) &mdash; never written to the dashboard files or committed. Asking a question sends the selected data slice to the endpoint above, so only use an endpoint approved for this data. For <strong>GenAI.mil</strong> or a custom gateway, paste the exact OpenAI-compatible Base URL and model id.</div>'
+            +   '<div style="margin-top:10px; font-size:0.78rem; color:var(--text-muted); line-height:1.5;">&#128274; Your key is stored only in <em>this browser</em> (localStorage) &mdash; never written to the dashboard files or committed. Asking a question sends the selected data slice to the endpoint above, so only use an endpoint approved for this data. For <strong>GenAI.mil</strong> or a custom gateway, paste the exact OpenAI-compatible Base URL and model id.<br>Gateways that block browser calls (no CORS headers, e.g. GenAI.mil) need the bundled proxy: run <code>python tools/ff-ai-proxy.py</code>, open the localhost URL it prints, and tick the box above. Anthropic/OpenAI/Gemini work without it.</div>'
             + '</details>'
             + '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">'
             +   '<label style="font-weight:bold;">Context sent:</label>'
