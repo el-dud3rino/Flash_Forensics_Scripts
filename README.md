@@ -21,7 +21,7 @@ An agentless Digital Forensics and Incident Response (DFIR) collection tool buil
 ## Artifacts Collected
 
 For every targeted system, the script maps cross-platform data:
-- **Running Processes**: Path, ID, Command Line, etc. (Windows via WMI, Linux via `ps`).
+- **Running Processes**: Path, ID, Command Line, SHA256, Signer, etc. (Windows via WMI, Linux via `ps`). Windows binaries carrying a **Mark-of-the-Web** (downloaded from the internet) surface `Origin` and `DownloadZone` columns.
 - **Services**: Name, Status, Start Type (Windows via WMI, Linux via `systemctl/service`).
 - **Scheduled Tasks**: Task Name, Command, Next Run Time (Windows Tasks, Linux Crontabs).
 - **Network Connections**: Local/Remote IP and Port, State (Windows via `NetTCPConnection`, Linux via `ss/netstat`).
@@ -29,13 +29,15 @@ For every targeted system, the script maps cross-platform data:
 - **Local Users**: Username, Enabled Status, Home Dir (Windows SAM, Linux `/etc/passwd`).
 - **Privileged Access**: Members of high-privileged groups and configuration (Windows Administrators/RDP Users, Linux sudo/wheel groups and sudoers).
 - **Active Logged In Users**: Current interactive, RDP, and SSH sessions (Windows via `quser`, Linux via `who`).
-- **System Persistence**: Evaluates `Run/RunOnce` keys, BITS jobs, and `BootExecute` on Windows. Evaluates bash profiles, `rc.local`, and `authorized_keys` on Linux. 
+- **System Persistence**: Evaluates `Run/RunOnce` keys, BITS jobs, `BootExecute`, **Image File Execution Options debuggers / SilentProcessExit**, **AppInit_DLLs**, and **Winlogon Notify** packages on Windows. Evaluates bash profiles, `rc.local`, and `authorized_keys` on Linux. 
 - **USB History**: Historical USB device connections (Windows via Registry USBSTOR).
 - **Startup Files**: Enumerates system and per-user Startup/autostart folders on both OSes.
 - **Execution Evidence**: Tracks lateral movement and program execution by parsing Windows Prefetch metadata, BAM (Background Activity Moderator), UserAssist (with ROT13 decode), JumpLists, ShimCache, Amcache, SRUM metadata, PSReadLine PowerShell History, Linux `sudo` executions, and Linux bash history. Features a built-in Javascript parser to directly import Eric Zimmerman `PECmd` CSV exports!
 - **Recycle Bin**: Parses Windows binary `$I` files across all SIDs and Linux `.trashinfo` files to reconstruct deleted files and deletion timestamps.
 - **Installed Software**: Name, Version, Publisher, Install Date (Windows via Registry, Linux via dpkg/rpm/snap).
 - **Firewall Rules**: Technical properties including local/remote IPs, Ports, Programs, Action and Direction (Windows via netsh, Linux via ufw/firewalld/iptables).
+- **Loaded Drivers**: Enumerates loaded kernel drivers with image path, state, and signature verdict (Windows via `Win32_SystemDriver`) — surfacing unsigned/unverified drivers for rootkit hunting.
+- **Microsoft Defender**: Antivirus exclusions (path/process/extension/IP), real-time protection and tamper-protection status, and threat detection history (Windows via `Get-MpPreference`, `Get-MpComputerStatus`, `Get-MpThreat`).
 - **RDP Connections**: Aggregates Inbound RDP (Event Logs 21, 24, 25) and Outbound RDP (Event Log 1024, Terminal Server Client Registry) providing Source/Destination IP mapping.
 - **Docker Containers**: Running images, container state, and network port mappings (Windows and Linux).
 - **DNS Configuration & Cache**: Local DNS cache entries and resolver configurations.

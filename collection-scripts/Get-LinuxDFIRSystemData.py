@@ -89,7 +89,9 @@ results = {
     "DockerContainers": [],
     "DNSCache": [],
     "SMBSessions": [],
-    "SMBShares": []
+    "SMBShares": [],
+    "Drivers": [],
+    "DefenderSecurity": []
 }
 
 # 0. System Info

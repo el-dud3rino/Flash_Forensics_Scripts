@@ -43,7 +43,41 @@ $Results = @{
     LoggedinUsers = @()
     DockerContainers = @()
     RecycleBin = @()
+    Drivers = @()
+    DefenderSecurity = @()
     Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+}
+
+# Per-path cache for expensive file inspection: SHA256 hash, Authenticode signature,
+# and Mark-of-the-Web (Zone.Identifier ADS). Duplicate process instances (dozens of
+# svchost.exe, chrome.exe, ...) collapse to a single computation per unique path.
+$FileInfoCache = @{}
+function Get-FileInspection {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return [PSCustomObject]@{ SHA256 = ""; Signer = ""; Origin = ""; Zone = "" }
+    }
+    if ($FileInfoCache.ContainsKey($Path)) { return $FileInfoCache[$Path] }
+    $info = [PSCustomObject]@{ SHA256 = ""; Signer = ""; Origin = ""; Zone = "" }
+    if (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue) {
+        try { $info.SHA256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash } catch { }
+        try {
+            $Sig = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction SilentlyContinue
+            if ($Sig.Status -eq "Valid") { $info.Signer = $Sig.SignerCertificate.Subject } else { $info.Signer = "Invalid/NotSigned" }
+        } catch { }
+        # Mark-of-the-Web: a Zone.Identifier alternate data stream means the file was downloaded.
+        try {
+            $zone = Get-Content -LiteralPath $Path -Stream Zone.Identifier -ErrorAction SilentlyContinue
+            if ($zone) {
+                $info.Zone   = (($zone | Where-Object { $_ -match '^ZoneId=' }) -replace 'ZoneId=', '').Trim()
+                $hostUrl     = (($zone | Where-Object { $_ -match '^HostUrl=' }) -replace 'HostUrl=', '').Trim()
+                $refUrl      = (($zone | Where-Object { $_ -match '^ReferrerUrl=' }) -replace 'ReferrerUrl=', '').Trim()
+                if ($hostUrl) { $info.Origin = $hostUrl } elseif ($refUrl) { $info.Origin = $refUrl }
+            }
+        } catch { }
+    }
+    $FileInfoCache[$Path] = $info
+    return $info
 }
 
 try {
@@ -63,30 +97,25 @@ try {
 
     # 1. Processes
     $Procs = Get-CimInstance Win32_Process
-    $ProcessDetails = @()
-    foreach ($P in $Procs) {
-        $Hash = ""
-        $Sign = ""
-        if ($P.Path -and (Test-Path $P.Path)) {
-            try { $Hash = (Get-FileHash -Path $P.Path -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash } catch { }
-            try { 
-                $Sig = Get-AuthenticodeSignature -FilePath $P.Path -ErrorAction SilentlyContinue
-                if ($Sig.Status -eq "Valid") { $Sign = $Sig.SignerCertificate.Subject }
-                else { $Sign = "Invalid/NotSigned" }
-            } catch { }
-        }
-        $ProcessDetails += [PSCustomObject]@{
+    # foreach-as-expression avoids the O(n^2) '+=' array-rebuild; hashing/signing is cached per path.
+    $Results.Processes = @(foreach ($P in $Procs) {
+        $insp = Get-FileInspection -Path $P.Path
+        $props = [ordered]@{
             ProcessId = $P.ProcessId
             Name = $P.Name
             Path = $P.Path
             CommandLine = $P.CommandLine
             ParentProcessId = $P.ParentProcessId
             CreationDate = $P.CreationDate
-            SHA256 = $Hash
-            Signer = $Sign
+            SHA256 = $insp.SHA256
+            Signer = $insp.Signer
         }
-    }
-    $Results.Processes = $ProcessDetails
+        # Only surface MOTW columns when the binary actually carries a download marker,
+        # so the Processes tab stays uncluttered on clean systems.
+        if ($insp.Origin) { $props.Origin = $insp.Origin }
+        if ($insp.Zone)   { $props.DownloadZone = $insp.Zone }
+        [PSCustomObject]$props
+    })
 } catch {
     Write-Warning "Failed to collect Processes: $_"
 }
@@ -129,14 +158,15 @@ try {
     if ($TCP) { $NetConns += $TCP }
     if ($UDP) { $NetConns += $UDP }
     
-    # Map to process name and path
-    $MappedConns = @()
-    foreach ($Conn in $NetConns) {
-        $Proc = $Results.Processes | Where-Object { $_.ProcessId -eq $Conn.OwningProcess }
+    # Index processes by PID once (O(1) lookups) instead of scanning the list per connection.
+    $ProcById = @{}
+    foreach ($Pr in $Results.Processes) { if ($null -ne $Pr.ProcessId) { $ProcById[[string]$Pr.ProcessId] = $Pr } }
+    $MappedConns = @(foreach ($Conn in $NetConns) {
+        $Proc = $ProcById[[string]$Conn.OwningProcess]
         $Conn | Add-Member -MemberType NoteProperty -Name ProcessName -Value ($Proc.Name) -PassThru -ErrorAction SilentlyContinue | Out-Null
         $Conn | Add-Member -MemberType NoteProperty -Name ProcessPath -Value ($Proc.Path) -PassThru -ErrorAction SilentlyContinue | Out-Null
-        $MappedConns += $Conn
-    }
+        $Conn
+    })
     $Results.NetworkConnections = $MappedConns
 } catch {
     Write-Warning "Failed to collect Network Connections: $_"
@@ -309,6 +339,46 @@ try {
         }
     } catch { }
 
+    # Image File Execution Options debugger / SilentProcessExit hijacks (MITRE T1546.012)
+    try {
+        $IFEOBase = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+        Get-ChildItem -Path $IFEOBase -ErrorAction SilentlyContinue | ForEach-Object {
+            $sub = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if ($sub.Debugger) {
+                $RegPersist += [PSCustomObject]@{ Key = $_.PSChildName; ValueName = "Debugger"; Data = $sub.Debugger; Source = "IFEO Debugger" }
+            }
+        }
+        $SPEBase = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SilentProcessExit"
+        Get-ChildItem -Path $SPEBase -ErrorAction SilentlyContinue | ForEach-Object {
+            $spe = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if ($spe.MonitorProcess) {
+                $RegPersist += [PSCustomObject]@{ Key = $_.PSChildName; ValueName = "MonitorProcess"; Data = $spe.MonitorProcess; Source = "IFEO Debugger" }
+            }
+        }
+    } catch { }
+
+    # AppInit_DLLs global DLL injection (MITRE T1546.010) - only report when populated
+    try {
+        foreach ($winKey in @("HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows", "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Windows")) {
+            $wk = Get-ItemProperty -Path $winKey -ErrorAction SilentlyContinue
+            if ($wk -and -not [string]::IsNullOrWhiteSpace([string]$wk.AppInit_DLLs)) {
+                $RegPersist += [PSCustomObject]@{ Key = $winKey; ValueName = "AppInit_DLLs"; Data = $wk.AppInit_DLLs; Source = "AppInit_DLLs" }
+                $RegPersist += [PSCustomObject]@{ Key = $winKey; ValueName = "LoadAppInit_DLLs"; Data = "$($wk.LoadAppInit_DLLs)"; Source = "AppInit_DLLs" }
+            }
+        }
+    } catch { }
+
+    # Winlogon Notify packages (legacy logon persistence, MITRE T1547.004)
+    try {
+        $NotifyBase = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\Notify"
+        if (Test-Path $NotifyBase) {
+            Get-ChildItem -Path $NotifyBase -ErrorAction SilentlyContinue | ForEach-Object {
+                $nk = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+                $RegPersist += [PSCustomObject]@{ Key = $_.PSChildName; ValueName = "DllName"; Data = "$($nk.DllName)"; Source = "Winlogon Notify" }
+            }
+        }
+    } catch { }
+
     $Results.SystemPersistence = $RegPersist
 
 } catch {
@@ -327,23 +397,18 @@ try {
     foreach ($Path in $StartupPaths) {
         $Files = Get-ChildItem -Path $Path -File -Force -ErrorAction SilentlyContinue
         foreach ($File in $Files) {
-            $Hash = ""
-            $Sign = ""
-            try { $Hash = (Get-FileHash -Path $File.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash } catch { }
-            try { 
-                $Sig = Get-AuthenticodeSignature -FilePath $File.FullName -ErrorAction SilentlyContinue
-                if ($Sig.Status -eq "Valid") { $Sign = $Sig.SignerCertificate.Subject }
-                else { $Sign = "Invalid/NotSigned" }
-            } catch { }
-            
-            $StartupFiles += [PSCustomObject]@{
+            $insp = Get-FileInspection -Path $File.FullName
+            $sfProps = [ordered]@{
                 Path = $File.FullName
                 CreationTime = $File.CreationTime
                 LastWriteTime = $File.LastWriteTime
                 Length = $File.Length
-                SHA256 = $Hash
-                Signer = $Sign
+                SHA256 = $insp.SHA256
+                Signer = $insp.Signer
             }
+            if ($insp.Origin) { $sfProps.Origin = $insp.Origin }
+            if ($insp.Zone)   { $sfProps.DownloadZone = $insp.Zone }
+            $StartupFiles += [PSCustomObject]$sfProps
         }
     }
     
@@ -375,8 +440,7 @@ try {
     }
     [DateTime]$Cutoff = (Get-Date).AddDays(-$CollectionDays)
     $Events = Get-WinEvent -FilterHashtable @{LogName='Security','System','Microsoft-Windows-PowerShell/Operational'; Id=$TargetIds; StartTime=$Cutoff} -MaxEvents 500 -ErrorAction SilentlyContinue
-    $ParsedEvents = @()
-    foreach ($E in $Events) {
+    $ParsedEvents = @(foreach ($E in $Events) {
         $BaseProps = [ordered]@{
             EventTime = $E.TimeCreated
             EventId   = $E.Id
@@ -446,9 +510,9 @@ try {
             $BaseProps.Message = $E.Message -replace '\s+', ' '
             $BaseProps.Details = $BaseProps.Message
         }
-        
-        $ParsedEvents += [PSCustomObject]$BaseProps
-    }
+
+        [PSCustomObject]$BaseProps
+    })
     $Results.EventLogs = $ParsedEvents
 } catch {
     Write-Warning "Failed to collect Event Logs: $_"
@@ -999,5 +1063,69 @@ try {
     }
     $Results.RecycleBin = $RecycleData
 } catch { Write-Warning "Failed to collect Recycle Bin: $_" }
+
+try {
+    # 20. Loaded Kernel Drivers (unsigned / odd-path drivers => rootkit hunting)
+    $DriverData = @()
+    foreach ($Drv in (Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue)) {
+        $imgPath = $Drv.PathName
+        if ($imgPath) {
+            $imgPath = $imgPath -replace '^\\\?\?\\', ''
+            if ($imgPath -notmatch '^[A-Za-z]:\\' -and $imgPath -match '\.sys$') {
+                $imgPath = Join-Path $env:windir $imgPath
+            }
+        }
+        $insp = Get-FileInspection -Path $imgPath
+        # "Unverified" (not "Unsigned") when Authenticode returns no signer: many legit
+        # inbox drivers are catalog-signed (.cat), which embedded-signature checks miss.
+        # It flags candidates to review without falsely branding them malicious.
+        $signed = "Unknown"
+        if ($insp.SHA256) {
+            $signed = if ($insp.Signer -and $insp.Signer -ne "Invalid/NotSigned") { "Signed" } else { "Unverified" }
+        }
+        $DriverData += [PSCustomObject]@{
+            Name = $Drv.Name
+            DisplayName = $Drv.DisplayName
+            State = "$($Drv.State)"
+            StartMode = "$($Drv.StartMode)"
+            PathName = $Drv.PathName
+            Signed = $signed
+            Signer = $insp.Signer
+            SHA256 = $insp.SHA256
+        }
+    }
+    $Results.Drivers = $DriverData
+} catch { Write-Warning "Failed to collect Drivers: $_" }
+
+try {
+    # 21. Microsoft Defender posture: exclusions, real-time status, and detection history.
+    # Exclusions and disabled protection are common attacker evasion steps.
+    $DefenderData = @()
+    $mp = Get-MpPreference -ErrorAction SilentlyContinue
+    if ($mp) {
+        foreach ($x in $mp.ExclusionPath)      { if ($x) { $DefenderData += [PSCustomObject]@{ Type = "Path";      Value = "$x"; Source = "Defender Exclusions" } } }
+        foreach ($x in $mp.ExclusionProcess)   { if ($x) { $DefenderData += [PSCustomObject]@{ Type = "Process";   Value = "$x"; Source = "Defender Exclusions" } } }
+        foreach ($x in $mp.ExclusionExtension) { if ($x) { $DefenderData += [PSCustomObject]@{ Type = "Extension"; Value = "$x"; Source = "Defender Exclusions" } } }
+        foreach ($x in $mp.ExclusionIpAddress) { if ($x) { $DefenderData += [PSCustomObject]@{ Type = "IpAddress"; Value = "$x"; Source = "Defender Exclusions" } } }
+    }
+    $mpStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    if ($mpStatus) {
+        $DefenderData += [PSCustomObject]@{ Type = "RealTimeProtectionEnabled";     Value = "$($mpStatus.RealTimeProtectionEnabled)";     Source = "Defender Status" }
+        $DefenderData += [PSCustomObject]@{ Type = "AntivirusEnabled";              Value = "$($mpStatus.AntivirusEnabled)";              Source = "Defender Status" }
+        $DefenderData += [PSCustomObject]@{ Type = "IsTamperProtected";             Value = "$($mpStatus.IsTamperProtected)";             Source = "Defender Status" }
+        $DefenderData += [PSCustomObject]@{ Type = "AntivirusSignatureLastUpdated"; Value = "$($mpStatus.AntivirusSignatureLastUpdated)"; Source = "Defender Status" }
+    }
+    foreach ($t in (Get-MpThreat -ErrorAction SilentlyContinue)) {
+        $DefenderData += [PSCustomObject]@{
+            Type = "Threat"
+            Value = "$($t.ThreatName)"
+            Severity = "$($t.SeverityID)"
+            Active = "$($t.IsActive)"
+            LastDetected = "$($t.LastThreatStatusChangeTime)"
+            Source = "Defender Detections"
+        }
+    }
+    $Results.DefenderSecurity = $DefenderData
+} catch { Write-Warning "Failed to collect Defender security data: $_" }
 
 return [PSCustomObject]$Results
