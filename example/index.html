@@ -619,7 +619,7 @@
             const all = (window.ffColKeys && window.ffColKeys[currentTab]) ? window.ffColKeys[currentTab].slice() : [];
             const hidden = getHiddenCols(currentTab);
             if (all.length === 0){ menu.innerHTML = '<div style="color:var(--text-muted); font-size:0.8rem;">Open a data tab with a table first.</div>'; return; }
-            let h = '<div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:12px;"><span>Columns â€” ' + escapeHtml(currentTab) + '</span><button onclick="showAllColumns()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.72rem;">Show all</button></div>';
+            let h = '<div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:12px;"><span>Columns - ' + escapeHtml(currentTab) + '</span><button onclick="showAllColumns()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.72rem;">Show all</button></div>';
             all.forEach(function(k){
                 const vis = hidden.indexOf(k) === -1;
                 h += '<label style="display:flex; align-items:center; gap:8px; padding:3px 0; cursor:pointer; font-size:0.85rem; color:var(--text-main);"><input type="checkbox"' + (vis ? ' checked' : '') + ' onchange="toggleColumn(\'' + escapeHtml(currentTab) + '\',\'' + escapeHtml(k) + '\')"> ' + escapeHtml(k) + '</label>';
