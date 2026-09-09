@@ -2580,6 +2580,7 @@ $HtmlContent = @'
         const AI_PRESETS = {
             anthropic: { label: 'Anthropic (Claude)', url: 'https://api.anthropic.com/v1/messages', model: 'claude-opus-5', format: 'anthropic' },
             openai:    { label: 'OpenAI',              url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o', format: 'openai' },
+            gemini:    { label: 'Google Gemini',       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.5-flash', format: 'openai' },
             genaimil:  { label: 'GenAI.mil (DoD gateway)', url: '', model: '', format: 'openai' },
             custom:    { label: 'Custom (OpenAI-compatible)', url: '', model: '', format: 'openai' }
         };
