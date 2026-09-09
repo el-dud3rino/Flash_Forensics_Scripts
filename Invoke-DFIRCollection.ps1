@@ -2579,7 +2579,7 @@ $HtmlContent = @'
             anthropic: { label: 'Anthropic (Claude)', url: 'https://api.anthropic.com/v1/messages', model: 'claude-opus-5', format: 'anthropic' },
             openai:    { label: 'OpenAI',              url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o', format: 'openai' },
             gemini:    { label: 'Google Gemini',       url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-3.8-flash', format: 'openai' },
-            genaimil:  { label: 'GenAI.mil (DoD gateway)', url: 'https://api.genai.mil/v1/chat/completions', model: 'gemini-2.5-flash', format: 'openai' },
+            genaimil:  { label: 'GenAI.mil (DoD gateway)', url: 'https://api.genai.mil/v1/chat/completions', model: 'gemini-3.8-flash', format: 'openai' },
             custom:    { label: 'Custom (OpenAI-compatible)', url: '', model: '', format: 'openai' }
         };
         window.aiConversation = window.aiConversation || [];
@@ -2607,6 +2607,36 @@ $HtmlContent = @'
             try { localStorage.removeItem('ff_ai_key'); } catch(e){}
             const el = document.getElementById('aiKey'); if (el) el.value='';
             const s = document.getElementById('aiSettingsStatus'); if (s){ s.textContent='API key cleared from this browser.'; setTimeout(function(){ s.textContent=''; }, 2500); }
+        }
+
+        async function aiLoadModels(){
+            const provider = document.getElementById('aiProvider').value;
+            const preset = AI_PRESETS[provider] || AI_PRESETS.custom;
+            const url = document.getElementById('aiBaseUrl').value.trim();
+            const key = document.getElementById('aiKey').value;
+            const statusEl = document.getElementById('aiModelsStatus');
+            if (!url || !key){ statusEl.textContent = 'Set Base URL and key first.'; return; }
+            // Derive the models endpoint from the chat endpoint (/chat/completions -> /models, or Anthropic /messages -> /models)
+            let modelsUrl = url.replace(/\/(chat\/completions|messages)(\?.*)?$/, '/models');
+            if (modelsUrl === url){ modelsUrl = url.replace(/\/+$/, '') + '/models'; }
+            const headers = (preset.format === 'anthropic')
+                ? { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }
+                : { 'authorization': 'Bearer ' + key };
+            statusEl.textContent = 'Loading models...';
+            try {
+                const res = await fetch(modelsUrl, { method: 'GET', headers: headers });
+                if (!res.ok){ throw new Error('HTTP ' + res.status + ': ' + (await res.text()).slice(0,300)); }
+                const data = await res.json();
+                const raw = data.data || data.models || [];
+                const ids = raw.map(function(m){ return (typeof m === 'string') ? m : (m.id || m.name); }).filter(Boolean).sort();
+                const dl = document.getElementById('aiModelList');
+                if (dl) dl.innerHTML = ids.map(function(id){ return '<option value="' + aiEsc(id) + '"></option>'; }).join('');
+                statusEl.textContent = ids.length + ' models available - click the Model box to pick one.';
+            } catch(e){
+                let msg = (e && e.message) ? e.message : String(e);
+                if (/Failed to fetch|NetworkError|TypeError/i.test(msg)){ msg += '  (file:// CORS - serve via "python -m http.server")'; }
+                statusEl.textContent = 'Failed: ' + msg;
+            }
         }
 
         function aiBuildContext(scope){
@@ -2751,7 +2781,13 @@ $HtmlContent = @'
             +     '<label>Base URL</label>'
             +     '<input id="aiBaseUrl" value="'+aiEsc(baseUrl)+'" placeholder="https://your-gateway/v1/chat/completions" style="padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
             +     '<label>Model</label>'
-            +     '<input id="aiModel" value="'+aiEsc(model)+'" placeholder="model id" style="padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
+            +     '<div style="display:flex; gap:8px; align-items:center;">'
+            +       '<input id="aiModel" list="aiModelList" value="'+aiEsc(model)+'" placeholder="model id" style="flex:1; padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
+            +       '<datalist id="aiModelList"></datalist>'
+            +       '<button type="button" onclick="aiLoadModels()" title="Query /v1/models for the exact available models" style="padding:6px 10px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer; white-space:nowrap;">Load models</button>'
+            +     '</div>'
+            +     '<div></div>'
+            +     '<div id="aiModelsStatus" style="font-size:0.75rem; color:var(--text-muted);"></div>'
             +     '<label>API Key</label>'
             +     '<input id="aiKey" type="password" value="'+aiEsc(key)+'" placeholder="paste your key" autocomplete="off" style="padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
             +     '<div></div>'
