@@ -72,7 +72,7 @@ This pipes the cleartext Python script directly to the `stdin` of the remote `py
 The Python payload relies heavily on executing native Linux binaries via `subprocess.run(..., capture_output=True)` and applying regex/string manipulation to the `stdout`.
 *   **System Info**: Parses `uname -a`, `/etc/os-release`, `uptime`, and `ip -4 addr show`.
 *   **Processes**: Parses `ps -eo pid,ppid,user,start_time,command`.
-*   **Services**: Parses `systemctl list-unit-files` for all `enabled` or `active` services.
+*   **Services**: Parses `systemctl list-units --type=service --all` (falling back to `service --status-all` on SysV systems), extracting the unit name, load/active/sub states, and description.
 *   **Network Connections**: Parses `ss -tupan` or fallbacks to `netstat -tupan`.
 *   **ARP Table**: Parses `ip neigh show` or fallbacks to `arp -an`.
 *   **Local Users**: Directly reads `/etc/passwd`.
