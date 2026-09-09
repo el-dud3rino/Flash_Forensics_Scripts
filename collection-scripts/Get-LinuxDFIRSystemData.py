@@ -21,6 +21,52 @@ def get_file_hash(filepath):
     except:
         return ""
 
+def split_host_port(hostport):
+    """Split 'addr:port' into (addr, port), tolerating IPv6 like [::]:22 and '*:*'."""
+    hp = hostport.strip()
+    if not hp or ':' not in hp:
+        return hp, ""
+    host, _, port = hp.rpartition(':')
+    return host.strip('[]'), port
+
+def parse_cron_line(line, has_user, source):
+    """Parse a single crontab line into structured fields, or None to skip.
+    System crontabs (/etc/crontab, /etc/cron.d) carry a USER field between the
+    schedule and the command; per-user crontabs (crontab -l) do not."""
+    line = line.strip()
+    if not line or line.startswith('#'):
+        return None
+    # Skip environment assignments (e.g. SHELL=/bin/sh, PATH=..., MAILTO=root)
+    if re.match(r'^[A-Za-z_][A-Za-z0-9_]*\s*=', line):
+        return None
+    user = ""
+    if line.startswith('@'):
+        toks = line.split(None, 2 if has_user else 1)
+        schedule = toks[0]
+        if has_user and len(toks) >= 3:
+            user, command = toks[1], toks[2]
+        else:
+            command = toks[1] if len(toks) > 1 else ""
+    else:
+        toks = line.split(None, 6 if has_user else 5)
+        if len(toks) <= 5:
+            return None
+        schedule = " ".join(toks[:5])
+        if has_user:
+            user = toks[5]
+            command = toks[6] if len(toks) > 6 else ""
+        else:
+            command = toks[5]
+    task_name = command.split()[0].split('/')[-1] if command.strip() else "cron"
+    return {
+        "TaskName": task_name,
+        "Schedule": schedule,
+        "User": user,
+        "Command": command,
+        "State": "Enabled",
+        "Source": source
+    }
+
 results = {
     "ComputerName": os.uname()[1],
     "Timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -120,44 +166,138 @@ if len(lines) > 1:
 
 # 2. Services
 svc_out = run_cmd("systemctl list-units --type=service --all --no-pager --no-legend")
-if not svc_out:
+if svc_out.strip():
+    # Columns: UNIT LOAD ACTIVE SUB DESCRIPTION
+    for line in svc_out.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        # systemd prefixes failed/inactive units with a status glyph (a non-word
+        # char). Strip any leading non-word tokens so the unit name is parts[0].
+        # (Kept ASCII-only: the payload is piped over SSH stdin and must survive
+        # re-encoding through the local codepage.)
+        line = re.sub(r'^[^\w]+', '', line)
+        if not line:
+            continue
+        parts = line.split(None, 4)
+        if len(parts) >= 4 and parts[0].endswith('.service'):
+            results["Services"].append({
+                "Name": parts[0],
+                "DisplayName": parts[4] if len(parts) > 4 else "",
+                "State": parts[2],       # active / inactive / failed
+                "SubState": parts[3],    # running / exited / dead
+                "StartMode": parts[1]    # loaded / not-found / masked
+            })
+else:
+    # Fallback for SysV systems without systemd
     svc_out = run_cmd("service --status-all")
-for line in svc_out.strip().split('\n'):
-    if line:
-        results["Services"].append({"ServiceRaw": line.strip()})
+    for line in svc_out.strip().split('\n'):
+        m = re.search(r'\[\s*([+\-?])\s*\]\s+(\S+)', line)
+        if m:
+            flag = m.group(1)
+            state = {"+": "active", "-": "inactive"}.get(flag, "unknown")
+            results["Services"].append({
+                "Name": m.group(2),
+                "DisplayName": "",
+                "State": state,
+                "SubState": "",
+                "StartMode": ""
+            })
 
 # 3. Scheduled Tasks
-cron_out = run_cmd("cat /etc/crontab /etc/cron.d/* 2>/dev/null; for u in $(cat /etc/passwd | cut -d: -f1); do crontab -u $u -l 2>/dev/null; done")
-for line in cron_out.strip().split('\n'):
-    line = line.strip()
-    if line and not line.startswith('#'):
-        results["ScheduledTasks"].append({"TaskRaw": line})
+# System-wide crontabs carry a USER field; per-user crontabs do not.
+sys_cron = run_cmd("cat /etc/crontab /etc/cron.d/* 2>/dev/null")
+for line in sys_cron.strip().split('\n'):
+    task = parse_cron_line(line, has_user=True, source="System Crontab")
+    if task:
+        results["ScheduledTasks"].append(task)
+
+for user in run_cmd("cut -d: -f1 /etc/passwd").strip().split('\n'):
+    user = user.strip()
+    if not user:
+        continue
+    user_cron = run_cmd(f"crontab -u {user} -l 2>/dev/null")
+    for line in user_cron.strip().split('\n'):
+        task = parse_cron_line(line, has_user=False, source=f"Crontab ({user})")
+        if task:
+            task["User"] = user
+            results["ScheduledTasks"].append(task)
 
 timer_out = run_cmd("systemctl list-timers --all --no-pager --no-legend")
 for line in timer_out.strip().split('\n'):
-    if line:
-        results["ScheduledTasks"].append({"TaskRaw": f"Systemd Timer: {line.strip()}"})
+    line = line.strip()
+    if not line:
+        continue
+    parts = line.split()
+    unit = next((p for p in parts if p.endswith('.timer')), "")
+    activates = parts[-1] if parts and parts[-1].endswith('.service') else ""
+    if not unit:
+        continue
+    results["ScheduledTasks"].append({
+        "TaskName": activates or unit,
+        "Schedule": "Systemd Timer",
+        "User": "",
+        "Command": unit,
+        "State": "Active",
+        "Source": "Systemd Timer"
+    })
 
 # 4. Network Connections
 net_out = run_cmd("ss -tupan")
-if not net_out:
+used_ss = bool(net_out.strip())
+if not used_ss:
     net_out = run_cmd("netstat -tupan")
+
 lines = net_out.strip().split('\n')
 if len(lines) > 1:
     for line in lines[1:]:
-        pid_match = re.search(r'pid=(\d+)', line)
-        proc_name = ""
-        proc_path = ""
-        owner_pid = ""
+        if not line.strip():
+            continue
+        parts = line.split()
+        proto = state = laddr = lport = raddr = rport = ""
+        owner_pid = proc_name = proc_path = ""
+
+        # Owning process: ss prints users:(("name",pid=NNN,fd=N)); netstat prints NNN/name
+        pid_match = re.search(r'pid=(\d+)', line) or re.search(r'\b(\d+)/\S+', line)
         if pid_match:
             owner_pid = pid_match.group(1)
+        name_match = re.search(r'\(\("([^"]+)"', line) or re.search(r'\b\d+/(\S+)', line)
+        if name_match:
+            proc_name = name_match.group(1)
+
+        if used_ss:
+            # ss: Netid State Recv-Q Send-Q Local:Port Peer:Port [Process]
+            if len(parts) >= 6:
+                proto = parts[0].upper()
+                state = parts[1]
+                laddr, lport = split_host_port(parts[4])
+                raddr, rport = split_host_port(parts[5])
+        else:
+            # netstat: Proto Recv-Q Send-Q Local Foreign [State] PID/Program
+            if len(parts) >= 5:
+                proto = parts[0].upper()
+                laddr, lport = split_host_port(parts[3])
+                raddr, rport = split_host_port(parts[4])
+                # State column only exists for TCP; UDP rows put PID/Program here
+                if len(parts) >= 6 and '/' not in parts[5]:
+                    state = parts[5]
+
+        # Enrich with the executable path from the collected process list
+        if owner_pid:
             for p in results["Processes"]:
                 if p["Id"] == owner_pid:
-                    proc_name = p["Name"]
+                    if not proc_name:
+                        proc_name = p["Name"]
                     proc_path = p["Path"]
                     break
+
         results["NetworkConnections"].append({
-            "ConnectionRaw": line.strip(),
+            "LocalAddress": laddr,
+            "LocalPort": lport,
+            "RemoteAddress": raddr,
+            "RemotePort": rport,
+            "State": state,
+            "Protocol": proto,
             "OwningProcess": owner_pid,
             "ProcessName": proc_name,
             "ProcessPath": proc_path

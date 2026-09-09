@@ -905,7 +905,7 @@ $HtmlContent = @'
             <ul style="list-style:none; padding:0; margin:0;">
                 <li style="margin-bottom:5px;"><a href="#" onclick="openPlaybook('Host Analyst')" style="color:var(--accent); text-decoration:none;">Host Analyst Playbook</a></li>
                 <li style="margin-bottom:5px;"><a href="#" onclick="openPlaybook('Network Analyst')" style="color:var(--accent); text-decoration:none;">Network Analyst Playbook</a></li>
-                <li><a href="/*PDF_BASE64_PLACEHOLDER*/" target="_blank" style="color:var(--accent); text-decoration:none;">SANS FOR508 Cheat Sheet (PDF)</a></li>
+                <li><a href="#" onclick="openPdfPlaybook(); return false;" style="color:var(--accent); text-decoration:none;">SANS FOR508 Cheat Sheet (PDF)</a></li>
             </ul>
         </div>
         
@@ -929,36 +929,40 @@ $HtmlContent = @'
                 <h1 id="computerTitle">Select a System</h1>
                 <span id="timestampBadge" style="color: var(--text-muted); font-size: 0.875rem;"></span>
             </div>
-            <div class="search-container" style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="filterSigned" style="margin-right: 6px;" onchange="switchTab(currentTab)">
-                        Hide Signed Binaries
-                    </label>
-                    <label style="color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="hideKnownGood" style="margin-right: 6px;" onchange="toggleHideKnownGood(this.checked)">
-                        Hide Known Good
-                    </label>
-                    <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." onkeydown="if(event.key === 'Enter') renderTable(currentTab)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
-                    <input type="text" id="searchInput" placeholder="Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:4px 8px; background:var(--bg-color); color:var(--text-main); width: 200px;">
-                </div>
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;" title="Strips GUIDs, Temp Paths, and Hex suffixes before comparing hashes">
-                        <input type="checkbox" id="normalizeIds" style="margin-right: 6px;" onchange="if(window.isCompareMode || window.isDiffMode) renderTable(currentTab)" checked>
-                        Normalize IDs (Fuzzy Match)
-                    </label>
-                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;" title="Processes will only match based on SHA256 when comparing across systems or diffs">
-                        <input type="checkbox" id="matchProcessSha256" style="margin-right: 6px;" onchange="if((window.isCompareMode || window.isDiffMode) && currentTab === 'Processes') renderTable(currentTab)">
-                        Match Processes by SHA256
-                    </label>
-                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="searchLatestAllSystems" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
-                        Search Latest (All Systems)
-                    </label>
-                    <label style="color: var(--text-muted); font-size: 0.80rem; display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="searchAllDatasets" style="margin-right: 6px;" onchange="handleSearch(document.getElementById('searchInput').value)">
-                        Search All Datasets (All Time)
-                    </label>
+            <div class="search-container" style="display: flex; align-items: center; gap: 10px;">
+                <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." onkeydown="if(event.key === 'Enter') renderTable(currentTab)" style="border:1px solid var(--glass-border); border-radius:4px; padding:6px 10px; background:var(--bg-color); color:var(--text-main); width: 180px;">
+                <input type="text" id="searchInput" placeholder="&#128269; Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:6px 10px; background:var(--bg-color); color:var(--text-main); width: 200px;">
+                <div style="position: relative;">
+                    <button id="headerOptionsBtn" onclick="toggleHeaderOptions()" title="View &amp; search options" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:6px 12px; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:6px;">&#9881; Options &#9662;</button>
+                    <div id="headerOptionsMenu" style="display:none; position:fixed; background:var(--bg-color); border:1px solid var(--glass-border); border-radius:6px; padding:10px 14px; z-index:1000; box-shadow:0 6px 18px rgba(0,0,0,0.5); min-width:260px; max-height:80vh; overflow-y:auto; text-align:left;">
+                        <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin:2px 0 6px;">Display</div>
+                        <label style="color:var(--text-main); font-size:0.85rem; display:flex; align-items:center; cursor:pointer; padding:4px 0;">
+                            <input type="checkbox" id="filterSigned" style="margin-right:8px;" onchange="switchTab(currentTab)">
+                            Hide Signed Binaries
+                        </label>
+                        <label style="color:var(--text-main); font-size:0.85rem; display:flex; align-items:center; cursor:pointer; padding:4px 0;">
+                            <input type="checkbox" id="hideKnownGood" style="margin-right:8px;" onchange="toggleHideKnownGood(this.checked)">
+                            Hide Known Good
+                        </label>
+                        <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin:10px 0 6px; padding-top:8px; border-top:1px solid var(--glass-border);">Compare / Diff Matching</div>
+                        <label style="color:var(--text-main); font-size:0.85rem; display:flex; align-items:center; cursor:pointer; padding:4px 0;" title="Strips GUIDs, Temp Paths, and Hex suffixes before comparing hashes">
+                            <input type="checkbox" id="normalizeIds" style="margin-right:8px;" onchange="if(window.isCompareMode || window.isDiffMode) renderTable(currentTab)" checked>
+                            Normalize IDs (Fuzzy Match)
+                        </label>
+                        <label style="color:var(--text-main); font-size:0.85rem; display:flex; align-items:center; cursor:pointer; padding:4px 0;" title="Processes will only match based on SHA256 when comparing across systems or diffs">
+                            <input type="checkbox" id="matchProcessSha256" style="margin-right:8px;" onchange="if((window.isCompareMode || window.isDiffMode) && currentTab === 'Processes') renderTable(currentTab)">
+                            Match Processes by SHA256
+                        </label>
+                        <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin:10px 0 6px; padding-top:8px; border-top:1px solid var(--glass-border);">Global Search Scope</div>
+                        <label style="color:var(--text-main); font-size:0.85rem; display:flex; align-items:center; cursor:pointer; padding:4px 0;">
+                            <input type="checkbox" id="searchLatestAllSystems" style="margin-right:8px;" onchange="handleSearch(document.getElementById('searchInput').value)">
+                            Search Latest (All Systems)
+                        </label>
+                        <label style="color:var(--text-main); font-size:0.85rem; display:flex; align-items:center; cursor:pointer; padding:4px 0;">
+                            <input type="checkbox" id="searchAllDatasets" style="margin-right:8px;" onchange="handleSearch(document.getElementById('searchInput').value)">
+                            Search All Datasets (All Time)
+                        </label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1042,6 +1046,36 @@ $HtmlContent = @'
             }
         }
         
+        function toggleHeaderOptions() {
+            const menu = document.getElementById('headerOptionsMenu');
+            const btn = document.getElementById('headerOptionsBtn');
+            if (!menu || !btn) return;
+            if (menu.style.display === 'block') {
+                menu.style.display = 'none';
+                return;
+            }
+            // Move the menu to <body> so it isn't clipped by #main's overflow:hidden
+            // and isn't trapped in .header's containing block (its backdrop-filter
+            // otherwise makes position:fixed resolve against the header, not the viewport).
+            if (menu.parentElement !== document.body) {
+                document.body.appendChild(menu);
+            }
+            const rect = btn.getBoundingClientRect();
+            menu.style.top = (rect.bottom + 6) + 'px';
+            menu.style.right = (window.innerWidth - rect.right) + 'px';
+            menu.style.left = 'auto';
+            menu.style.display = 'block';
+        }
+        // Close the Options menu when clicking anywhere outside it
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('headerOptionsMenu');
+            const btn = document.getElementById('headerOptionsBtn');
+            if (!menu || menu.style.display !== 'block') return;
+            if (!menu.contains(e.target) && btn && !btn.contains(e.target)) {
+                menu.style.display = 'none';
+            }
+        });
+
         function appendFilter(elementId, col, text) {
             const input = document.getElementById('filter-' + elementId);
             if (input) {
@@ -1193,6 +1227,23 @@ $HtmlContent = @'
                 </body></html>
             `);
             newWin.document.close();
+        }
+
+        // Chrome/Edge block top-level navigation to data: URLs, so the bundled PDF
+        // is decoded to a Blob URL (which browsers do allow) and opened in a new tab.
+        const pdfPlaybookData = "/*PDF_BASE64_PLACEHOLDER*/";
+        function openPdfPlaybook() {
+            if (!pdfPlaybookData) { alert('The SANS FOR508 PDF was not bundled with this dashboard.'); return; }
+            try {
+                const bin = atob(pdfPlaybookData);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+                const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+                window.open(url, '_blank');
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } catch (e) {
+                alert('Failed to open the bundled PDF: ' + e.message);
+            }
         }
 
         function renderComputerList() {
@@ -3005,9 +3056,10 @@ $HtmlContent = @'
 
 $HtmlContent = $HtmlContent.Replace('/*PLAYBOOKS_PLACEHOLDER*/', "const playbooks = { `"Host Analyst`": $HostPlaybookJson, `"Network Analyst`": $NetworkPlaybookJson };")
 if ($PdfBase64) {
-    $HtmlContent = $HtmlContent.Replace('/*PDF_BASE64_PLACEHOLDER*/', "data:application/pdf;base64,$PdfBase64")
+    # Inject raw base64 into the JS variable; the dashboard decodes it to a Blob URL on click.
+    $HtmlContent = $HtmlContent.Replace('/*PDF_BASE64_PLACEHOLDER*/', $PdfBase64)
 } else {
-    $HtmlContent = $HtmlContent.Replace('/*PDF_BASE64_PLACEHOLDER*/', "#")
+    $HtmlContent = $HtmlContent.Replace('/*PDF_BASE64_PLACEHOLDER*/', "")
 }
 
 $HtmlContent | Out-File -FilePath $HtmlPath -Encoding UTF8
