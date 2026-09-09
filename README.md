@@ -11,13 +11,13 @@ An agentless Digital Forensics and Incident Response (DFIR) collection tool buil
 - **Smart Temporal Filtering**: Automatically scales data collection windows (e.g., pulling 5 days of event logs/execution evidence for a new host, but only 2 days for previously scanned hosts) to drastically reduce collection time and duplicate data.
 - **Analyst Collection Log**: Automatically maintains a timestamped CSV log (`Analyst_Collection_Log_YYYY-MM-DD.csv`) mapping hostnames, OS types, execution duration, and statuses.
 - **Triage Flagging & Analyst Notes**: Bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions. The Flagged Items tab includes an editable **Analyst Notes** column that saves your notes locally. You can export the flagged items and your notes to a CSV for incident reports.
-- **Dynamic UI**: Features resizable table columns that automatically persist when switching tabs or paginating data.
+- **Dynamic UI**: Resizable table columns that persist across tab switches and pagination, plus a **Columns** button to show/hide individual columns per tab — each tab remembers its own hidden columns across navigation.
 - **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, sorting unique outliers to the top.
 - **Dataset Diff Mode (Single Host)**: Compare changes on a single machine between multiple timelines. Click "Diff Timelines" when viewing a host to select a Base and Target dataset. The dashboard computes the differences, highlighting new items in green (Added) and missing items in red (Removed).
 - **Temporal Datasets**: Each run creates a timestamped dataset folder (e.g., `Host-YYYY-MM-DD_HHMMZ`), allowing you to review and compare historical captures of the same system.
 - **Global Search**: Search across all categories on a specific system or sweep across all collected systems globally (both latest datasets and all-time history).
 - **Raw Data Export**: Exports standard CSV files for each artifact type per machine for ingestion into SIEMs or long-term archiving.
-- **Ask AI (Optional)**: An opt-in **🤖 Ask AI** button in the top bar opens a popover for asking natural-language questions about the collected data. Because it overlays the tab you are already viewing (rather than being its own tab), the "current tab" context option reflects whatever you are actually looking at. It is provider-agnostic — pick a preset (Anthropic Claude, OpenAI, Google Gemini, or a **GenAI.mil**/custom OpenAI-compatible gateway), paste your own endpoint/model/key, and choose how much context to send (current host + tab, that tab across all of the host's timelines, the whole host, the whole host across all timelines, or every loaded host). This is the **only** feature that makes a network call; the rest of the dashboard stays fully offline. Your API key is stored only in that browser's `localStorage` — it is never written to the dashboard files or committed. Because a question ships forensic data to the chosen endpoint, only point it at an endpoint approved for that data. Gateways that don't send CORS headers (e.g. **GenAI.mil**) can't be called from a browser directly; for those, run the bundled proxy — `.\tools\ff-ai-proxy.ps1` (PowerShell, no Python required) or `python tools/ff-ai-proxy.py` — open the localhost URL it prints, and tick **"Route through local proxy"** in AI Settings. Anthropic/OpenAI/Gemini work without it.
+- **Ask AI (Optional)**: An opt-in **🤖 Ask AI** popover (top-bar button) answers natural-language questions about the collected data using **your own** AI provider — Anthropic Claude, OpenAI, Google Gemini, or a **GenAI.mil**/custom OpenAI-compatible gateway. It is the only feature that makes a network call. See **[AI Assistant (Ask AI)](#ai-assistant-ask-ai)** below for setup, context scopes, and the local proxy for gateways like GenAI.mil.
 
 ## Artifacts Collected
 
@@ -121,6 +121,77 @@ If you run the collection script on the same system multiple times, the dashboar
 3. Select a **Base** (older) dataset and a **Target** (newer) dataset.
 4. The dashboard will automatically compare the two datasets and inject a **Diff** column into the tables. This allows you to see which artifacts were `+ Added`, `- Removed`, or `Unchanged`. You can also filter directly on these statuses using the column dropdown!
 
+## Showing & Hiding Columns
+
+Every data tab has a **Columns** button in the top bar. Click it to open a checklist of that tab's columns — untick a column to hide it, tick it to bring it back, or use **Show all**. Hidden columns are remembered **per tab** and persist as you navigate: hiding `ProcessId` on the Processes tab does not hide it on other tabs, and your choices survive switching tabs and reopening the dashboard (they are stored in your browser).
+
+## AI Assistant (Ask AI)
+
+The dashboard includes an optional, provider-agnostic AI assistant for asking natural-language questions about the collected data (e.g. *"Which running processes are unsigned or downloaded from the internet?"* or *"What persistence looks suspicious on this host?"*). Click the **🤖 Ask AI** button in the top bar to open it as a popover over the current tab.
+
+> **This is the only feature that reaches the network.** A question sends the selected slice of forensic data to whatever endpoint you configure, so only point it at an endpoint approved for that data. Your API key is stored **only in your browser** (`localStorage`) — never written to `index.html`/`data.js` and never committed.
+
+### Supported providers
+
+| Provider | Notes |
+|----------|-------|
+| **Anthropic (Claude)** | Native API. Works directly from the browser. |
+| **OpenAI** | Works directly from the browser. |
+| **Google Gemini** | Uses Gemini's OpenAI-compatible endpoint. Works directly. |
+| **GenAI.mil (DoD gateway)** | Endpoint prefilled. Requires the **local proxy** (see below) because it does not send CORS headers. |
+| **Custom (OpenAI-compatible)** | Paste any OpenAI-compatible Base URL. |
+
+### Quick start
+
+1. Click **🤖 Ask AI**, expand **AI Settings**.
+2. Pick a **Provider** (this prefills the Base URL and a default model). For GenAI.mil or a custom gateway, confirm/paste the exact Base URL.
+3. Paste your **API key** and click **Save**. (Optional: click **Load models** to query `GET /v1/models` and pick the exact model from the list — handy for GenAI.mil, which fronts OpenAI, Gemini, and Grok models.)
+4. Choose the **Context sent** scope, type a question, and press **Ask** (or Ctrl/Cmd+Enter).
+
+### Context scopes
+
+Because the assistant overlays the tab you are viewing, the "current tab" scope reflects what you are actually looking at. Five levels are available:
+
+- **Current host + current tab** — a minimal slice of the selected dataset (one host, one category).
+- **Current host + current tab (all timelines)** — that tab's data from every temporal capture of the host, each tagged with its timestamp (great for *"what changed on this tab over time"*).
+- **Current host, all categories** — the entire selected dataset.
+- **Current host, all categories (all timelines)** — every dataset of the host, in full.
+- **Everything loaded (all hosts)** — all datasets for all hosts.
+
+A live size readout (approx. characters / tokens) is shown, with a warning past ~500K characters, so nothing is sent silently.
+
+### Using the local proxy (for GenAI.mil / gateways without CORS)
+
+Some gateways — notably **GenAI.mil** — do not return the CORS headers a browser requires, so the browser blocks the response no matter where you run from. The fix is a small local proxy that serves the dashboard and relays your API calls server-to-server (where CORS does not apply). Two equivalent versions ship in `tools/` — use whichever your system has:
+
+**PowerShell (no Python required):**
+```powershell
+# Run from the repository root, in the same elevated PowerShell you use for collection
+.\tools\ff-ai-proxy.ps1
+```
+
+**Python:**
+```powershell
+python tools/ff-ai-proxy.py
+```
+
+Then:
+
+1. Open the `http://localhost:8000/` URL the proxy prints (use `http://localhost:8000/example/` for the sample dataset).
+2. In **AI Settings**, tick **"Route through local proxy"**.
+3. Select **GenAI.mil**, paste your key, and ask as normal.
+
+Notes:
+- Anthropic, OpenAI, and Gemini work **without** the proxy — leave the box unticked for those.
+- Your key still lives only in the browser; it passes through the local proxy exactly as it would going direct. Nothing is stored or logged.
+- Both the chat and **Load models** requests route through the proxy when the box is ticked.
+- If your network performs TLS inspection and the proxy cannot validate the gateway's certificate, run it with `-Insecure` (PowerShell) or `--insecure` (Python).
+- Change the port with `-Port 8080` / `--port 8080` if 8000 is taken.
+
+### GenAI.mil key locking
+
+GenAI.mil automatically **locks API keys every 8 hours**. When locked, a request returns `401` with an unlock URL. The dashboard detects this and shows an **🔓 Unlock key** link plus a **Retry** button — click the link to re-enable your key (or unlock it from the GenAI.mil web UI), then click **Retry** to re-send your question.
+
 ## Directory Structure
 
 ```text
@@ -131,6 +202,8 @@ If you run the collection script on the same system multiple times, the dashboar
  ├── 📄 Architecture.md        (Technical Deep Dive)
  ├── 📁 collection-scripts\    (Payloads deployed to endpoints)
  ├── 📁 playbook\              (Documentation and playbooks)
+ ├── 📁 tools\                 (ff-ai-proxy.ps1 / ff-ai-proxy.py - local AI proxy)
+ ├── 📁 example\               (Self-contained synthetic sample dashboard)
  └── 📁 FlashForensics_Output\ 
      └── 📁 <ComputerName>-<YYYY-MM-DD_HHMMZ>\  (Timestamped folder for each scanned system)
          ├── 📄 <ComputerName>-DFIR_Data.json
