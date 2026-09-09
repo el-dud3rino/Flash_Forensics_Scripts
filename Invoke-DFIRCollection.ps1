@@ -932,6 +932,7 @@ $HtmlContent = @'
             <div class="search-container" style="display: flex; align-items: center; gap: 10px;">
                 <input type="text" id="massFilterInput" placeholder="Filter Current Tab..." onkeydown="if(event.key === 'Enter') renderTable(currentTab)" style="border:1px solid var(--glass-border); border-radius:4px; padding:6px 10px; background:var(--bg-color); color:var(--text-main); width: 180px;">
                 <input type="text" id="searchInput" placeholder="&#128269; Global Search..." onkeydown="if(event.key === 'Enter') handleSearch(this.value)" style="border:1px solid var(--glass-border); border-radius:4px; padding:6px 10px; background:var(--bg-color); color:var(--text-main); width: 200px;">
+                <button id="columnsBtn" onclick="toggleColumnsMenu()" title="Show / hide columns on this tab" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:6px 12px; cursor:pointer; white-space:nowrap;">Columns &#9662;</button>
                 <button id="askAiBtn" onclick="toggleAskAI()" title="Ask AI about the data on the current tab" style="background:#6d28d9; color:white; border:1px solid #6d28d9; border-radius:4px; padding:6px 12px; cursor:pointer; white-space:nowrap;">&#129302; Ask AI</button>
                 <div style="position: relative;">
                     <button id="headerOptionsBtn" onclick="toggleHeaderOptions()" title="View &amp; search options" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:6px 12px; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:6px;">&#9881; Options &#9662;</button>
@@ -1077,6 +1078,67 @@ $HtmlContent = @'
             if (!menu.contains(e.target) && btn && !btn.contains(e.target)) {
                 menu.style.display = 'none';
             }
+        });
+
+        // ---- Per-tab column show/hide (persisted; each tab independent) ----
+        function getHiddenCols(tab){
+            try { return (JSON.parse(localStorage.getItem('ff_hidden_cols') || '{}')[tab]) || []; } catch(e){ return []; }
+        }
+        function setHiddenCols(tab, arr){
+            let o = {};
+            try { o = JSON.parse(localStorage.getItem('ff_hidden_cols') || '{}'); } catch(e){}
+            if (arr && arr.length) { o[tab] = arr; } else { delete o[tab]; }
+            try { localStorage.setItem('ff_hidden_cols', JSON.stringify(o)); } catch(e){}
+        }
+        function toggleColumn(tab, key){
+            const h = getHiddenCols(tab);
+            const i = h.indexOf(key);
+            if (i === -1) { h.push(key); } else { h.splice(i, 1); }
+            setHiddenCols(tab, h);
+            renderTable(currentTab);
+            buildColumnsMenu();
+        }
+        function showAllColumns(){
+            setHiddenCols(currentTab, []);
+            renderTable(currentTab);
+            buildColumnsMenu();
+        }
+        function toggleColumnsMenu(){
+            let menu = document.getElementById('columnsMenu');
+            if (menu && menu.style.display === 'block'){ menu.style.display = 'none'; return; }
+            if (!menu){
+                menu = document.createElement('div');
+                menu.id = 'columnsMenu';
+                menu.style.cssText = 'position:fixed; z-index:1000; min-width:220px; max-height:70vh; overflow-y:auto; background:var(--bg-color); border:1px solid var(--glass-border); border-radius:6px; box-shadow:0 8px 22px rgba(0,0,0,0.5); padding:10px 12px;';
+                document.body.appendChild(menu);
+            }
+            menu.style.display = 'block';
+            buildColumnsMenu();
+            const btn = document.getElementById('columnsBtn');
+            const rect = btn ? btn.getBoundingClientRect() : null;
+            menu.style.top = (rect ? rect.bottom + 6 : 70) + 'px';
+            menu.style.right = (rect ? Math.max(8, window.innerWidth - rect.right) : 16) + 'px';
+            menu.style.left = 'auto';
+        }
+        function buildColumnsMenu(){
+            const menu = document.getElementById('columnsMenu');
+            if (!menu || menu.style.display !== 'block') return;
+            const all = (window.ffColKeys && window.ffColKeys[currentTab]) ? window.ffColKeys[currentTab].slice() : [];
+            const hidden = getHiddenCols(currentTab);
+            if (all.length === 0){ menu.innerHTML = '<div style="color:var(--text-muted); font-size:0.8rem;">Open a data tab with a table first.</div>'; return; }
+            let h = '<div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:12px;"><span>Columns — ' + escapeHtml(currentTab) + '</span><button onclick="showAllColumns()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.72rem;">Show all</button></div>';
+            all.forEach(function(k){
+                const vis = hidden.indexOf(k) === -1;
+                h += '<label style="display:flex; align-items:center; gap:8px; padding:3px 0; cursor:pointer; font-size:0.85rem; color:var(--text-main);"><input type="checkbox"' + (vis ? ' checked' : '') + ' onchange="toggleColumn(\'' + escapeHtml(currentTab) + '\',\'' + escapeHtml(k) + '\')"> ' + escapeHtml(k) + '</label>';
+            });
+            menu.innerHTML = h;
+        }
+        // Close the Columns menu on outside click
+        document.addEventListener('click', function(e){
+            const menu = document.getElementById('columnsMenu');
+            const btn = document.getElementById('columnsBtn');
+            if (!menu || menu.style.display !== 'block') return;
+            if (!menu.contains(e.target) && btn && !btn.contains(e.target)){ menu.style.display = 'none'; }
         });
 
         function appendFilter(elementId, col, text) {
@@ -1859,7 +1921,16 @@ $HtmlContent = @'
             if (currentTab === 'FirewallRules') {
                 keys = keys.filter(k => k !== 'Program' && k !== 'Profile');
             }
-            
+
+            // Column visibility (per-tab, persisted in localStorage). Record the full
+            // column set so the Columns menu can list hidden ones, then drop hidden keys.
+            window.ffColKeys = window.ffColKeys || {};
+            const _colAcc = new Set(window.ffColKeys[currentTab] || []);
+            keys.forEach(k => _colAcc.add(k));
+            window.ffColKeys[currentTab] = Array.from(_colAcc);
+            const _hiddenCols = getHiddenCols(currentTab);
+            if (_hiddenCols.length) { keys = keys.filter(k => _hiddenCols.indexOf(k) === -1); }
+
             let html = titleHtml + '<table><thead><tr>';
             if (currentTab !== 'FlaggedItems') {
                 html += '<th style="width:50px; text-align:center;">Flag</th>';
@@ -2870,7 +2941,7 @@ $HtmlContent = @'
             +     '<div></div>'
             +     '<label style="display:flex; align-items:center; cursor:pointer; font-size:0.82rem; color:var(--text-main);"><input type="checkbox" id="aiUseProxy"'+(useProxy?' checked':'')+' style="margin-right:8px;"> Route through local proxy (for gateways without CORS, e.g. GenAI.mil)</label>'
             +   '</div>'
-            +   '<div style="margin-top:10px; font-size:0.78rem; color:var(--text-muted); line-height:1.5;">&#128274; Your key is stored only in <em>this browser</em> (localStorage) &mdash; never written to the dashboard files or committed. Asking a question sends the selected data slice to the endpoint above, so only use an endpoint approved for this data. For <strong>GenAI.mil</strong> or a custom gateway, paste the exact OpenAI-compatible Base URL and model id.<br>Gateways that block browser calls (no CORS headers, e.g. GenAI.mil) need the bundled proxy: run <code>python tools/ff-ai-proxy.py</code>, open the localhost URL it prints, and tick the box above. Anthropic/OpenAI/Gemini work without it.</div>'
+            +   '<div style="margin-top:10px; font-size:0.78rem; color:var(--text-muted); line-height:1.5;">&#128274; Your key is stored only in <em>this browser</em> (localStorage) &mdash; never written to the dashboard files or committed. Asking a question sends the selected data slice to the endpoint above, so only use an endpoint approved for this data. For <strong>GenAI.mil</strong> or a custom gateway, paste the exact OpenAI-compatible Base URL and model id.<br>Gateways that block browser calls (no CORS headers, e.g. GenAI.mil) need the bundled proxy: run <code>.\\tools\\ff-ai-proxy.ps1</code> (PowerShell, no Python needed) or <code>python tools/ff-ai-proxy.py</code>, open the localhost URL it prints, and tick the box above. Anthropic/OpenAI/Gemini work without it.</div>'
             + '</details>'
             + '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">'
             +   '<label style="font-weight:bold;">Context sent:</label>'
