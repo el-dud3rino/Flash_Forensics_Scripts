@@ -122,6 +122,14 @@ Users can flag rows for investigation using the 🚩 icon.
 3.  **Persistence**: This string is pushed into the browser's native `localStorage.getItem('ff_flags')` array. Users can also add **Analyst Notes** in the Flagged Items tab, which are saved back into the exact artifact's object in `localStorage`.
 4.  **Export Engine**: The "Export Flags" logic iterates through `localStorage`, parses the stringified data back into CSV format (including the custom Analyst Notes), generates a virtual Blob URL (`URL.createObjectURL(blob)`), and dynamically clicks a hidden anchor tag to trigger the browser download of `FFS_Flagged_Items.csv`.
 
+### Ask AI (Optional GenAI Integration)
+The **Ask AI** popover (opened from a top-bar button) is the only component that leaves the local sandbox. It is rendered as a floating panel reparented to `document.body` so it overlays the active data tab without changing `currentTab` — which is what the "current host + current tab" context scope reads. It is fully opt-in and provider-agnostic.
+
+1.  **Configuration (client-side only)**: The analyst selects a provider preset (Anthropic Claude, OpenAI, Google Gemini, or a GenAI.mil / custom OpenAI-compatible gateway) and supplies a Base URL, model id, and API key. Gemini uses its OpenAI-compatible endpoint (`/v1beta/openai/chat/completions`), so it flows through the same OpenAI-format transport rather than a bespoke branch. All four values persist **only** in the browser's `localStorage` (`ff_ai_*` keys); they are never written into `index.html`/`data.js` and never committed. No key or endpoint is embedded in the generated dashboard.
+2.  **Context scoping**: Before each question the analyst chooses how much data to attach — the current host + current tab (a minimal slice), the entire current host, or every loaded host. The engine serializes only that slice to JSON and displays an estimated size (chars / tokens) with a warning past ~500K characters, so nothing is sent silently.
+3.  **Request transport**: A raw `fetch` is issued directly from the browser. For the Anthropic format it POSTs to `/v1/messages` with `x-api-key`, `anthropic-version: 2023-06-01`, and `anthropic-dangerous-direct-browser-access: true`, and reads the `content[].text` blocks. For the OpenAI-compatible format it POSTs to the gateway's `/chat/completions` with an `Authorization: Bearer` header and reads `choices[0].message.content`. (From a `file://` origin a gateway may block CORS; the UI then advises serving the folder via `python -m http.server`.)
+4.  **Prompt-injection hardening**: The system prompt instructs the model that the attached DATA is untrusted evidence from a possibly-compromised host — command lines, filenames, and log messages may contain attacker-controlled text — and that it must analyze the data only, never follow instructions embedded within it.
+
 ---
 
 ## 5. Commands Executed (Reference)
