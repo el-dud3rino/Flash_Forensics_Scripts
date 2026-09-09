@@ -2,3 +2,4 @@ FlashForensics_Output/
 /index.html
 /data.js
 .git_commit_msg.txt
+__pycache__/
