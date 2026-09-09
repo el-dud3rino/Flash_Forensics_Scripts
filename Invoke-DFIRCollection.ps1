@@ -2584,6 +2584,15 @@ $HtmlContent = @'
         };
         window.aiConversation = window.aiConversation || [];
 
+        // Tabs that draw from more than one data category, so the "current tab" scopes send all of them.
+        const aiTabKeyMap = {
+            'Users': ['LocalUsers','PrivilegedAccess'],
+            'NetworkConnections': ['NetworkConnections','ArpTable'],
+            'SMBSessions': ['SMBSessions','SMBShares'],
+            'ProcessTree': ['Processes'],
+            'Timeline': ['Processes','ScheduledTasks','ExecutionEvidence','EventLogs']
+        };
+
         function aiEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
         function aiGet(k, d){ try { const v = localStorage.getItem(k); return v===null?d:v; } catch(e){ return d; } }
         function aiSet(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
@@ -2646,17 +2655,27 @@ $HtmlContent = @'
 
         function aiBuildContext(scope){
             if (scope === 'all'){ return { label: 'All loaded hosts/datasets', data: dfirData }; }
+
+            // Scopes spanning every temporal dataset (timeline) of the selected host
+            if (scope === 'host-all' || scope === 'tab-all'){
+                const runs = selectedHostname ? groupedSystems[selectedHostname] : null;
+                if (!runs || runs.length === 0){ return { label: 'No host selected', data: null }; }
+                if (scope === 'host-all'){
+                    return { label: 'Current host "' + selectedHostname + '", all categories, ' + runs.length + ' timeline(s)', data: runs };
+                }
+                const tKeys = aiTabKeyMap[currentTab] || [currentTab];
+                const series = runs.map(function(ds){
+                    const slice = { ComputerName: ds.ComputerName || ds.PSComputerName, Timestamp: ds.Timestamp };
+                    tKeys.forEach(function(k){ if (ds[k] !== undefined) slice[k] = ds[k]; });
+                    return slice;
+                });
+                return { label: 'Current host "' + selectedHostname + '", "' + currentTab + '" tab, ' + runs.length + ' timeline(s)', data: series };
+            }
+
             if (!currentComputer){ return { label: 'No host selected', data: null }; }
             const ident = { ComputerName: currentComputer.ComputerName || currentComputer.PSComputerName, Timestamp: currentComputer.Timestamp };
             if (scope === 'host'){ return { label: 'Current host (all categories)', data: currentComputer }; }
-            const tabKeyMap = {
-                'Users': ['LocalUsers','PrivilegedAccess'],
-                'NetworkConnections': ['NetworkConnections','ArpTable'],
-                'SMBSessions': ['SMBSessions','SMBShares'],
-                'ProcessTree': ['Processes'],
-                'Timeline': ['Processes','ScheduledTasks','ExecutionEvidence','EventLogs']
-            };
-            const keys = tabKeyMap[currentTab] || [currentTab];
+            const keys = aiTabKeyMap[currentTab] || [currentTab];
             const slice = { _host: ident };
             keys.forEach(function(k){ if (currentComputer[k] !== undefined) slice[k] = currentComputer[k]; });
             return { label: 'Current host, "' + currentTab + '" tab', data: slice };
@@ -2841,7 +2860,9 @@ $HtmlContent = @'
             +   '<label style="font-weight:bold;">Context sent:</label>'
             +   '<select id="aiScope" onchange="aiUpdateSizeReadout()" style="padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
             +     '<option value="tab">Current host + current tab</option>'
+            +     '<option value="tab-all">Current host + current tab (all timelines)</option>'
             +     '<option value="host">Current host, all categories</option>'
+            +     '<option value="host-all">Current host, all categories (all timelines)</option>'
             +     '<option value="all">Everything loaded (all hosts)</option>'
             +   '</select>'
             +   '<button onclick="aiClearConversation()" style="margin-left:auto; padding:6px 12px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">Clear conversation</button>'
