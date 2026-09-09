@@ -188,6 +188,23 @@ Notes:
 - If your network performs TLS inspection and the proxy cannot validate the gateway's certificate, run it with `-Insecure` (PowerShell) or `--insecure` (Python).
 - Change the port with `-Port 8080` / `--port 8080` if 8000 is taken.
 
+### Running where PowerShell scripts are blocked (ExecutionPolicy)
+
+If your environment blocks `.ps1` files (an ExecutionPolicy of `Restricted` or `AllSigned`, common on DoD systems), you can still run the proxy. ExecutionPolicy governs script **files**, not commands, so you load the script's text and run it as a command:
+
+- **Easiest — use the bundled launcher:** double-click **`tools\ff-ai-proxy.cmd`** (a `.cmd` file, not subject to PowerShell ExecutionPolicy). It reads `ff-ai-proxy.ps1` and runs it as a command block. Pass arguments through, e.g. `tools\ff-ai-proxy.cmd -Port 8080`.
+- **Or run the one-liner:**
+  ```powershell
+  powershell -NoProfile -Command "$sb=[ScriptBlock]::Create((Get-Content -Raw '.\tools\ff-ai-proxy.ps1')); & $sb -Port 8000"
+  ```
+- **Or pipe it via stdin:**
+  ```powershell
+  Get-Content -Raw .\tools\ff-ai-proxy.ps1 | powershell -NoProfile -Command -
+  ```
+- If `powershell -ExecutionPolicy Bypass -File .\tools\ff-ai-proxy.ps1` works for you (i.e., the policy isn't locked by Group Policy), that's fine too.
+
+These same techniques run any `.ps1` in the project. Note: if the system additionally enforces **Constrained Language Mode** (WDAC/AppLocker), the proxy's .NET calls may be blocked no matter how you launch it — in that case use the Python proxy (`python tools/ff-ai-proxy.py`), or use a provider that needs no proxy (Anthropic/OpenAI/Gemini).
+
 ### GenAI.mil key locking
 
 GenAI.mil automatically **locks API keys every 8 hours**. When locked, a request returns `401` with an unlock URL. The dashboard detects this and shows an **🔓 Unlock key** link plus a **Retry** button — click the link to re-enable your key (or unlock it from the GenAI.mil web UI), then click **Retry** to re-send your question.
@@ -202,7 +219,7 @@ GenAI.mil automatically **locks API keys every 8 hours**. When locked, a request
  ├── 📄 Architecture.md        (Technical Deep Dive)
  ├── 📁 collection-scripts\    (Payloads deployed to endpoints)
  ├── 📁 playbook\              (Documentation and playbooks)
- ├── 📁 tools\                 (ff-ai-proxy.ps1 / ff-ai-proxy.py - local AI proxy)
+ ├── 📁 tools\                 (local AI proxy: ff-ai-proxy.ps1 / .py, and .cmd launcher)
  ├── 📁 example\               (Self-contained synthetic sample dashboard)
  └── 📁 FlashForensics_Output\ 
      └── 📁 <ComputerName>-<YYYY-MM-DD_HHMMZ>\  (Timestamped folder for each scanned system)
