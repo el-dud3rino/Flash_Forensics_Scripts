@@ -2184,6 +2184,11 @@
             const s = document.getElementById('aiSettingsStatus'); if (s){ s.textContent='API key cleared from this browser.'; setTimeout(function(){ s.textContent=''; }, 2500); }
         }
 
+        function aiPickModel(){
+            const sel = document.getElementById('aiModelSelect');
+            if (sel && sel.value){ document.getElementById('aiModel').value = sel.value; aiSet('ff_ai_model', sel.value); }
+        }
+
         async function aiLoadModels(){
             const provider = document.getElementById('aiProvider').value;
             const preset = AI_PRESETS[provider] || AI_PRESETS.custom;
@@ -2205,9 +2210,14 @@
                 const data = await res.json();
                 const raw = data.data || data.models || [];
                 const ids = raw.map(function(m){ return (typeof m === 'string') ? m : (m.id || m.name); }).filter(Boolean).sort();
-                const dl = document.getElementById('aiModelList');
-                if (dl) dl.innerHTML = ids.map(function(id){ return '<option value="' + aiEsc(id) + '"></option>'; }).join('');
-                statusEl.textContent = ids.length + ' models available - click the Model box to pick one.';
+                const sel = document.getElementById('aiModelSelect');
+                if (sel){
+                    const cur = document.getElementById('aiModel').value.trim();
+                    sel.innerHTML = '<option value="">-- pick a model (' + ids.length + ') --</option>'
+                        + ids.map(function(id){ return '<option value="' + aiEsc(id) + '"' + (id === cur ? ' selected' : '') + '>' + aiEsc(id) + '</option>'; }).join('');
+                    sel.hidden = false;
+                }
+                statusEl.textContent = ids.length + ' models available - pick one from the dropdown below.';
             } catch(e){
                 const safeUnlock = (e && e.unlockUrl && /^https?:\/\//i.test(e.unlockUrl)) ? e.unlockUrl : null;
                 if (safeUnlock){
@@ -2453,6 +2463,41 @@
 
         function aiClearConversation(){ window.aiConversation = []; aiRenderConversation(); }
 
+        function aiCopyText(text){
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus(); ta.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch(e){}
+            if (!ok && navigator.clipboard){ try { navigator.clipboard.writeText(text); ok = true; } catch(e){} }
+            document.body.removeChild(ta);
+            return ok;
+        }
+
+        function aiCopyConversation(btn){
+            if (!window.aiConversation || window.aiConversation.length === 0){ return; }
+            const lines = [];
+            window.aiConversation.forEach(function(e){
+                lines.push('You (' + (e.scope || '') + '):');
+                lines.push(e.q || '');
+                lines.push('');
+                if (e.pending){ lines.push('Assistant: (pending...)'); }
+                else if (e.error){ lines.push('Error: ' + e.error); }
+                else { lines.push('Assistant:'); lines.push(e.a || ''); }
+                lines.push('');
+                lines.push('----------------------------------------');
+                lines.push('');
+            });
+            const ok = aiCopyText(lines.join('\n'));
+            if (btn){
+                const orig = btn.textContent;
+                btn.textContent = ok ? 'Copied!' : 'Copy failed';
+                setTimeout(function(){ btn.textContent = orig; }, 1500);
+            }
+        }
+
         function aiBuildPanel(container){
             const provider = aiGet('ff_ai_provider','anthropic');
             const preset = AI_PRESETS[provider] || AI_PRESETS.anthropic;
@@ -2475,10 +2520,11 @@
             +     '<input id="aiBaseUrl" value="'+aiEsc(baseUrl)+'" placeholder="https://your-gateway/v1/chat/completions" style="padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
             +     '<label>Model</label>'
             +     '<div style="display:flex; gap:8px; align-items:center;">'
-            +       '<input id="aiModel" list="aiModelList" value="'+aiEsc(model)+'" placeholder="model id" style="flex:1; padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
-            +       '<datalist id="aiModelList"></datalist>'
+            +       '<input id="aiModel" value="'+aiEsc(model)+'" placeholder="model id" style="flex:1; padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;">'
             +       '<button type="button" onclick="aiLoadModels()" title="Query /v1/models for the exact available models" style="padding:6px 10px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer; white-space:nowrap;">Load models</button>'
             +     '</div>'
+            +     '<div></div>'
+            +     '<select id="aiModelSelect" onchange="aiPickModel()" hidden style="width:100%; padding:6px; background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px;"></select>'
             +     '<div></div>'
             +     '<div id="aiModelsStatus" style="font-size:0.75rem; color:var(--text-muted);"></div>'
             +     '<label>API Key</label>'
@@ -2503,7 +2549,8 @@
             +     '<option value="host-all">Current host, all categories (all timelines)</option>'
             +     '<option value="all">Everything loaded (all hosts)</option>'
             +   '</select>'
-            +   '<button onclick="aiClearConversation()" style="margin-left:auto; padding:6px 12px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">Clear conversation</button>'
+            +   '<button onclick="aiCopyConversation(this)" style="margin-left:auto; padding:6px 12px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">Copy conversation</button>'
+            +   '<button onclick="aiClearConversation()" style="margin-left:8px; padding:6px 12px; background:var(--bg-lighter); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; cursor:pointer;">Clear conversation</button>'
             + '</div>'
             + '<div id="aiSizeReadout" style="font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;"></div>'
             + '<div id="aiConversation" style="max-height:300px; overflow-y:auto; border:1px solid var(--glass-border); border-radius:8px; padding:12px; margin-bottom:12px; background:rgba(0,0,0,0.1);"></div>'
