@@ -771,12 +771,26 @@
             newWin.document.write(`
                 <html><head><title>${name} Playbook</title>
                 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
-                <style>body { font-family: sans-serif; padding: 20px; line-height: 1.6; max-width: 900px; margin: 0 auto; color: #333; background: #f9f9f9; } pre { background: #eee; padding: 10px; overflow-x: auto; font-family:monospace; } code { background: #eee; padding: 2px 4px; border-radius: 3px; font-family:monospace; } h1,h2,h3 { border-bottom: 1px solid #ccc; padding-bottom: 5px; color: #2c3e50; } table { border-collapse: collapse; width: 100%; margin-bottom:20px; } th, td { border: 1px solid #ccc; padding: 8px; text-align: left; } th { background: #ddd; }</style>
+                <style>html { background: #0f172a; color-scheme: dark; } body { font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 32px 24px; line-height: 1.65; max-width: 900px; margin: 0 auto; color: #cbd5e1; background: #0f172a; } a { color: #60a5fa; text-decoration: none; } a:hover { text-decoration: underline; } h1, h2, h3, h4, h5, h6 { color: #f8fafc; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; margin: 28px 0 12px; scroll-margin-top: 16px; } h1 { color: #60a5fa; } h4, h5, h6 { border-bottom: none; margin-top: 18px; } pre { background: #1e293b; border: 1px solid rgba(255,255,255,0.1); padding: 12px; overflow-x: auto; border-radius: 6px; } code { background: #1e293b; padding: 2px 5px; border-radius: 3px; font-family: Consolas, 'Courier New', monospace; color: #e2e8f0; } pre code { background: none; padding: 0; } table { border-collapse: collapse; width: 100%; margin-bottom: 20px; } th, td { border: 1px solid rgba(255,255,255,0.15); padding: 8px; text-align: left; } th { background: #1e293b; color: #f8fafc; } strong { color: #f1f5f9; } hr { border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 24px 0; } ul, ol { padding-left: 22px; } li { margin: 3px 0; }</style>
                 </head><body>
                 <div id="content"></div>
                 <script>
                     if (typeof marked !== 'undefined') {
-                        document.getElementById('content').innerHTML = marked.parse(${JSON.stringify(md)});
+                        var contentEl = document.getElementById('content');
+                        contentEl.innerHTML = marked.parse(${JSON.stringify(md)});
+                        // marked does not emit heading ids, so the Table of Contents anchor
+                        // links have nothing to jump to. Assign GitHub-style slugs (lowercase,
+                        // punctuation stripped, spaces to hyphens, -N suffix for duplicates).
+                        (function(){
+                            var seen = {};
+                            function slugify(t){ return t.trim().toLowerCase().replace(/[^\\w\\s-]/g,'').replace(/\\s/g,'-'); }
+                            var heads = contentEl.querySelectorAll('h1,h2,h3,h4,h5,h6');
+                            for (var i=0; i<heads.length; i++){
+                                var s = slugify(heads[i].textContent);
+                                if (seen[s] === undefined){ seen[s] = 0; } else { seen[s]++; s = s + '-' + seen[s]; }
+                                heads[i].id = s;
+                            }
+                        })();
                     } else {
                         document.getElementById('content').innerHTML = "<div style='background:#fee; padding:10px; margin-bottom:20px; border-left:4px solid red;'>Warning: Could not load Markdown renderer (offline mode). Displaying raw text.</div><pre style='white-space:pre-wrap;'>" + ${JSON.stringify(md)}.replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</pre>";
                     }
