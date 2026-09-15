@@ -94,6 +94,27 @@ results = {
     "DefenderSecurity": []
 }
 
+# Record collection privilege so the dashboard can flag incomplete (non-root) runs.
+# Root-only artifacts (auth logs, other users' cron/history, full socket ownership,
+# iptables, /root ssh keys) return empty as a normal user, so a clean tab could
+# otherwise be mistaken for "nothing found" instead of "could not read it".
+try:
+    _euid = os.geteuid()
+except Exception:
+    _euid = -1
+try:
+    import pwd
+    _cuser = pwd.getpwuid(_euid).pw_name if _euid >= 0 else (os.environ.get("USER") or "unknown")
+except Exception:
+    _cuser = os.environ.get("USER") or "unknown"
+_is_root = (_euid == 0)
+results["CollectionContext"] = {
+    "Platform": "Linux",
+    "User": _cuser,
+    "IsElevated": _is_root,
+    "Privilege": "root" if _is_root else "non-root user"
+}
+
 # 0. System Info
 results["SystemInfo"].append({"Property": "Kernel", "Value": run_cmd("uname -a").strip()})
 os_release = run_cmd("cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2").replace('\"', '').strip()

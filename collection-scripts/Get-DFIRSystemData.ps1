@@ -46,6 +46,23 @@ $Results = @{
     Drivers = @()
     DefenderSecurity = @()
     Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+    CollectionContext = $(
+        # Record whether the payload ran with a full (elevated) administrator token.
+        # Admin-only artifacts (Defender, Security log, all-SID Recycle Bin, USBSTOR,
+        # BITS, other users' data) silently return empty when run as a standard user,
+        # so the dashboard flags the privilege level rather than let a clean tab mislead.
+        $ctxAdmin = $false
+        try {
+            $ctxId = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            $ctxAdmin = (New-Object System.Security.Principal.WindowsPrincipal($ctxId)).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+        } catch { }
+        [PSCustomObject]@{
+            Platform   = "Windows"
+            User       = "$env:USERDOMAIN\$env:USERNAME"
+            IsElevated = $ctxAdmin
+            Privilege  = if ($ctxAdmin) { "Administrator" } else { "Standard User" }
+        }
+    )
 }
 
 # Per-path cache for expensive file inspection: SHA256 hash, Authenticode signature,

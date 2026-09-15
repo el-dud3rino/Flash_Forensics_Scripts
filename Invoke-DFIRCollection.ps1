@@ -122,6 +122,13 @@ if ($BuildDashboardOnly) {
     foreach ($Comp in $ComputerName) {
         if ($Comp -eq "localhost" -or $Comp -eq "127.0.0.1" -or $Comp -eq $env:COMPUTERNAME -or $Comp -eq '.') {
             Write-Output "Starting local DFIR collection on $($env:COMPUTERNAME)..."
+            # Preflight: local collection inherits THIS console's token. Without elevation,
+            # admin-only artifacts come back empty and the results look deceptively clean.
+            $LocalElevated = $false
+            try { $LocalElevated = ([System.Security.Principal.WindowsPrincipal][System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator) } catch { }
+            if (-not $LocalElevated) {
+                Write-Warning "Local collection is NOT running elevated. Defender, the Security event log, all-user Recycle Bin, USB history, and BITS will be incomplete. Close this and re-open PowerShell 'As Administrator' for full results."
+            }
             try {
                 $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes -CollectionDays 5 -EventDaysMap $EventDaysMap
                 if ($LocalResult) {
@@ -352,6 +359,19 @@ foreach ($Result in $Results) {
     }
 
     Write-Output "Processing results for $TargetName..."
+
+    # Per-host privilege summary so the analyst knows whether a clean tab means
+    # "nothing found" or "could not read it" (matches the dashboard banner).
+    $Ctx = $Result.CollectionContext
+    if ($Ctx) {
+        if ($Ctx.IsElevated) {
+            Write-Output "  Privilege: $TargetName collected as $($Ctx.User) [$($Ctx.Privilege)] - full artifact access."
+        } else {
+            Write-Warning "  Privilege: $TargetName collected as $($Ctx.User) [$($Ctx.Privilege)] - some artifacts may be INCOMPLETE. Re-run elevated (Windows Administrator / Linux root) for full results."
+        }
+    } else {
+        Write-Warning "  Privilege: $TargetName has no collection-context info (older payload); completeness cannot be confirmed."
+    }
 
     # Export to JSON
     $JsonPath = Join-Path -Path $SystemOutputDir -ChildPath "$TargetName-DFIR_Data.json"
@@ -968,6 +988,7 @@ $HtmlContent = @'
                 </div>
             </div>
         </div>
+        <div id="privBanner" style="display:none; padding:8px 16px; margin:0; font-size:0.85rem; color:var(--text-main);"></div>
         <div class="tabs" id="tabs">
             <div class="tab" data-tab="SystemInfo" onclick="switchTab('SystemInfo')">System Info</div>
             <div class="tab" data-tab="Processes" onclick="switchTab('Processes')">Processes</div>
@@ -1423,6 +1444,7 @@ $HtmlContent = @'
                 currentComputer = runs ? runs[0] : null;
             }
             renderTimestampBadge();
+            renderPrivBanner();  // hide/show synchronously when entering or leaving diff mode
             switchTab(currentTab);
         }
 
@@ -1462,6 +1484,35 @@ $HtmlContent = @'
             }
         }
         
+        function renderPrivBanner() {
+            const el = document.getElementById('privBanner');
+            if (!el) return;
+            // Hide in aggregate views (no single run to describe) or when data lacks context.
+            if (window.isCompareMode || window.isDiffMode || !currentComputer) { el.style.display = 'none'; el.innerHTML = ''; return; }
+            const ctx = currentComputer.CollectionContext;
+            if (!ctx) {
+                // Older datasets collected before privilege tracking existed.
+                el.style.display = 'block';
+                el.style.background = 'rgba(148,163,184,0.12)';
+                el.style.borderLeft = '4px solid var(--text-muted)';
+                el.innerHTML = '<span style="margin-right:8px;">&#9432;</span>Collection privilege was not recorded for this dataset (collected by an older version). Some artifacts may be incomplete if it was not run elevated/root.';
+                return;
+            }
+            el.style.display = 'block';
+            if (ctx.IsElevated) {
+                el.style.background = 'rgba(34,197,94,0.12)';
+                el.style.borderLeft = '4px solid #22c55e';
+                el.innerHTML = '<span style="margin-right:8px;">&#10003;</span>Collected as <strong>' + aiEsc(ctx.User) + '</strong> (' + aiEsc(ctx.Privilege) + ') &ndash; full artifact access.';
+            } else {
+                const gap = (ctx.Platform === 'Linux')
+                    ? 'auth logs, other users&#39; cron/history, full socket ownership, and iptables may be incomplete. Re-run as <strong>root</strong> for complete results.'
+                    : 'Defender, the Security event log, all-user Recycle Bin, USB history, and BITS may be incomplete. Re-run as <strong>Administrator</strong> for complete results.';
+                el.style.background = 'rgba(245,158,11,0.14)';
+                el.style.borderLeft = '4px solid #f59e0b';
+                el.innerHTML = '<span style="margin-right:8px;">&#9888;</span>Collected as <strong>' + aiEsc(ctx.User) + '</strong> (' + aiEsc(ctx.Privilege) + ') &ndash; ' + gap;
+            }
+        }
+
         function computeDiff(baseArr, targetArr, tabName) {
             let bArr = Array.isArray(baseArr) ? baseArr : (baseArr ? [baseArr] : []);
             let tArr = Array.isArray(targetArr) ? targetArr : (targetArr ? [targetArr] : []);
@@ -1540,7 +1591,8 @@ $HtmlContent = @'
 
         function selectDataset(sysData) {
             currentComputer = sysData;
-            
+            renderPrivBanner();  // update the privilege banner immediately (table render is deferred via setTimeout)
+
             // Re-run search if a search was active
             const searchInput = document.getElementById('searchInput');
             if (searchInput.value.trim()) {
@@ -2158,6 +2210,7 @@ $HtmlContent = @'
 
         function renderTable(tabName) {
             const container = document.getElementById('tableContainer');
+            renderPrivBanner();
             if (!currentComputer && !window.isCompareMode) return;
             if (window.isCompareMode && window.selectedHosts.size === 0) {
                 container.innerHTML = '<div class="empty-state">Select one or more hosts from the sidebar to compare them.</div>';
