@@ -574,6 +574,16 @@
             }
         });
 
+        // Display-only column labels (the underlying data key is unchanged, so sorting,
+        // filtering, the Process Tree, the network join and diffing all keep working).
+        function colLabel(tab, key){
+            if (tab === 'Processes'){
+                if (key === 'ProcessId') return 'PID';
+                if (key === 'ParentProcessId') return 'PPID';
+            }
+            return key;
+        }
+
         // ---- Per-tab column show/hide (persisted; each tab independent) ----
         function getHiddenCols(tab){
             try { return (JSON.parse(localStorage.getItem('ff_hidden_cols') || '{}')[tab]) || []; } catch(e){ return []; }
@@ -623,7 +633,7 @@
             let h = '<div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:12px;"><span>Columns - ' + escapeHtml(currentTab) + '</span><button onclick="showAllColumns()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.72rem;">Show all</button></div>';
             all.forEach(function(k){
                 const vis = hidden.indexOf(k) === -1;
-                h += '<label style="display:flex; align-items:center; gap:8px; padding:3px 0; cursor:pointer; font-size:0.85rem; color:var(--text-main);"><input type="checkbox"' + (vis ? ' checked' : '') + ' onchange="toggleColumn(\'' + escapeHtml(currentTab) + '\',\'' + escapeHtml(k) + '\')"> ' + escapeHtml(k) + '</label>';
+                h += '<label style="display:flex; align-items:center; gap:8px; padding:3px 0; cursor:pointer; font-size:0.85rem; color:var(--text-main);"><input type="checkbox"' + (vis ? ' checked' : '') + ' onchange="toggleColumn(\'' + escapeHtml(currentTab) + '\',\'' + escapeHtml(k) + '\')"> ' + escapeHtml(colLabel(currentTab, k)) + '</label>';
             });
             menu.innerHTML = h;
         }
@@ -1499,7 +1509,7 @@
                 
                 html += `<th>
                             <div style="display:flex; align-items:center; gap:6px;">
-                                <div class="sortable-header" onclick="sortTable('${escapeHtml(k)}')" style="flex:1; min-width:0;">${escapeHtml(k)}${sortIndicator}</div>
+                                <div class="sortable-header" onclick="sortTable('${escapeHtml(k)}')" style="flex:1; min-width:0;">${escapeHtml(colLabel(currentTab, k))}${sortIndicator}</div>
                                 <button title="Hide this column (re-add it from the Columns menu)" onclick="event.stopPropagation(); toggleColumn('${escapeHtml(currentTab)}','${escapeHtml(k)}')" style="flex-shrink:0; background:none; border:1px solid var(--glass-border); color:var(--text-muted); border-radius:4px; width:18px; height:18px; line-height:1; padding:0; cursor:pointer; font-size:0.95rem;" onmouseover="this.style.color='var(--danger)'; this.style.borderColor='var(--danger)';" onmouseout="this.style.color='var(--text-muted)'; this.style.borderColor='var(--glass-border)';">&#8722;</button>
                             </div>
                             <div style="display:flex; align-items:center; position:relative; margin-top:5px;">
