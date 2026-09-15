@@ -2026,7 +2026,10 @@ $HtmlContent = @'
                 let filterValue = columnFilters[k] ? escapeHtml(columnFilters[k]) : "";
                 
                 html += `<th>
-                            <div class="sortable-header" onclick="sortTable('${escapeHtml(k)}')">${escapeHtml(k)}${sortIndicator}</div>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <div class="sortable-header" onclick="sortTable('${escapeHtml(k)}')" style="flex:1; min-width:0;">${escapeHtml(k)}${sortIndicator}</div>
+                                <button title="Hide this column (re-add it from the Columns menu)" onclick="event.stopPropagation(); toggleColumn('${escapeHtml(currentTab)}','${escapeHtml(k)}')" style="flex-shrink:0; background:none; border:1px solid var(--glass-border); color:var(--text-muted); border-radius:4px; width:18px; height:18px; line-height:1; padding:0; cursor:pointer; font-size:0.95rem;" onmouseover="this.style.color='var(--danger)'; this.style.borderColor='var(--danger)';" onmouseout="this.style.color='var(--text-muted)'; this.style.borderColor='var(--glass-border)';">&#8722;</button>
+                            </div>
                             <div style="display:flex; align-items:center; position:relative; margin-top:5px;">
                                 <input type="text" id="filter-${groupId}-${escapeHtml(k)}" class="column-filter" placeholder="Filter..." value="${filterValue}" onkeydown="if(event.key === 'Enter') setColumnFilter('${escapeHtml(k)}', this.value)" style="width:100%; border-radius:4px 0 0 4px;">
                                 <button title="Filter Builder" style="background:var(--accent); color:white; border:1px solid var(--accent); border-radius:0 4px 4px 0; padding:3px 6px; cursor:pointer;" onclick="toggleFilterHelp('${groupId}-${escapeHtml(k)}')">&#9660;</button>
