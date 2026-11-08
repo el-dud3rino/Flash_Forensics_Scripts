@@ -1452,7 +1452,20 @@ $HtmlContent = @'
                 }
             }
             cleanDates(systems);
-            systems.forEach(s => { try { markToolArtifacts(s); } catch(e) { console.warn('[FFS] tool-artifact tagging failed', e); } });
+            // Every recorded collection per host, so each dataset can also recognize traces left by
+            // earlier runs (their logons, module loads) that fall inside its event window.
+            const hostRuns = {};
+            systems.forEach((s, idx) => {
+                const ctx = (s && s.CollectionContext) || {};
+                const start = ffsParseTime(ctx.StartTimeUtc);
+                if (isNaN(start)) return;
+                const name = s.ComputerName || s.PSComputerName || `Unknown-${idx}`;
+                (hostRuns[name] = hostRuns[name] || []).push({ start, user: String(ctx.User || '').replace(/^.*\\/, '').toLowerCase() });
+            });
+            systems.forEach((s, idx) => {
+                const name = s.ComputerName || s.PSComputerName || `Unknown-${idx}`;
+                try { markToolArtifacts(s, hostRuns[name]); } catch(e) { console.warn('[FFS] tool-artifact tagging failed', e); }
+            });
 
             
             groupedSystems = {};
@@ -3758,7 +3771,9 @@ $HtmlContent = @'
         }
 
         // Tags the collector's own traces in one dataset. Returns the number tagged.
-        function markToolArtifacts(sys) {
+        // hostRuns: [{ start: ms, user: 'shortname' }] for every dataset of this host that recorded
+        // StartTimeUtc, so traces an EARLIER collection left in this dataset's logs are recognized too.
+        function markToolArtifacts(sys, hostRuns) {
             if (!sys || typeof sys !== 'object') return 0;
             let n = 0;
             const TOOL = ffsToolKey();
@@ -3771,7 +3786,18 @@ $HtmlContent = @'
             // Events from this user after the collector started can only come from this run.
             // (Needs StartTimeUtc: the dataset Timestamp is local time on Windows.)
             const t0 = ffsParseTime(ctx.StartTimeUtc);
-            const duringRun = v => { if (isNaN(t0)) return false; const t = ffsParseTime(v); return !isNaN(t) && t >= t0 - 2 * 60000; };
+            // Which collection (if any) an event time belongs to. This run: from just before its start
+            // onward (nothing after the collection can be in the data). Earlier runs of the same host:
+            // a bounded window, since their end time is unknown and later events are not theirs.
+            const priorRuns = (Array.isArray(hostRuns) ? hostRuns : []).filter(r => r && !isNaN(r.start) && r.start !== t0);
+            const runAt = v => {
+                const t = ffsParseTime(v);
+                if (isNaN(t)) return null;
+                if (!isNaN(t0) && t >= t0 - 2 * 60000) return { user, current: true };
+                for (const r of priorRuns) if (t >= r.start - 2 * 60000 && t <= r.start + 15 * 60000) return { user: r.user, current: false };
+                return null;
+            };
+            const userReFor = u => u ? new RegExp('User = (?:[^\\\\\\r\\n]*\\\\)?' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'im') : null;
             const normIp = ip => String(ip || '').trim().replace(/^::ffff:/i, '').replace(/^\[|\]$/g, '');
 
             // --- Process tree: collector process + descendants (+ Linux session wrappers) ---
@@ -3823,7 +3849,6 @@ $HtmlContent = @'
             const sshIp = ssh.length >= 2 ? normIp(ssh[0]) : '';
             const sshPort = ssh.length >= 2 ? ssh[1] : '';
             if (sshIp) analystIps.add(sshIp);
-            const userRe = user ? new RegExp('User = (?:[^\\\\\\r\\n]*\\\\)?' + user.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'im') : null;
             const evs = list('EventLogs');
             const linuxToolTimes = new Set();
             evs.forEach(e => {
@@ -3836,10 +3861,12 @@ $HtmlContent = @'
                     // The collector's Get-NetTCPConnection / Get-ScheduledTask / Get-Smb* calls auto-load
                     // CDXML modules, and PowerShell logs their generated "cmdletization" code (dozens of
                     // 4104 parts). Framework code, not collector text, so attribute it by time.
-                    if (id === 4104 && duringRun(e.EventTime) && /__cmdletization_|Microsoft\.PowerShell\.Cmdletization/.test(String(e.ScriptBlockText || ''))) return mark(e, 'PowerShell module auto-loaded by collector');
+                    const run = runAt(e.EventTime);
+                    if (id === 4104 && run && /__cmdletization_|Microsoft\.PowerShell\.Cmdletization/.test(String(e.ScriptBlockText || ''))) return mark(e, run.current ? 'PowerShell module auto-loaded by collector' : 'PowerShell module auto-loaded by an earlier collection');
                     const ci = String(e.ContextInfo || '');
                     if (/Get-DFIRSystemData/i.test(ci)) return mark(e, 'Collector module log');
-                    if (id === 4103 && userRe && duringRun(e.EventTime) && userRe.test(ci)) return mark(e, 'Collector module log');
+                    const re = run && userReFor(run.user);
+                    if (id === 4103 && re && re.test(ci)) return mark(e, 'Collector module log');
                     return;
                 }
                 if (isLinux) {
@@ -3850,15 +3877,17 @@ $HtmlContent = @'
                     }
                     return;
                 }
-                if (!user || !duringRun(e.EventTime)) return;
+                const run = runAt(e.EventTime);
+                if (!run || !run.user) return;
                 const tu = String(e.TargetUserName || '').replace(/^.*\\/, '').toLowerCase();
                 const su = String(e.SubjectUserName || '').replace(/^.*\\/, '').toLowerCase();
-                if ([4624, 4634, 4647, 4648, 4672].includes(id) && (tu === user || (id === 4672 && su === user))) {
+                if ([4624, 4634, 4647, 4648, 4672].includes(id) && (tu === run.user || (id === 4672 && su === run.user))) {
                     const ip = normIp(e.IpAddress);
-                    if (ip && ip !== '-' && ip !== '::1' && !/^127\./.test(ip)) analystIps.add(ip);
-                    return mark(e, 'Collector logon');
+                    // Only this run's session can still be a live WinRM socket in this dataset.
+                    if (run.current && ip && ip !== '-' && ip !== '::1' && !/^127\./.test(ip)) analystIps.add(ip);
+                    return mark(e, run.current ? 'Collector logon' : 'Logon by an earlier collection');
                 }
-                if (id === 4688 && (su === user || /\\wsmprovhost\.exe$/i.test(String(e.ParentProcessName || '')))) mark(e, 'Process started by collector');
+                if (id === 4688 && (su === run.user || /\\wsmprovhost\.exe$/i.test(String(e.ParentProcessName || '')))) mark(e, run.current ? 'Process started by collector' : 'Process started by an earlier collection');
             });
             if (linuxToolTimes.size) {
                 // PAM / logind lines logged in the same second as the collector's SSH or sudo line.

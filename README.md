@@ -142,6 +142,8 @@ Collecting from a host changes it a little, and on a host with PowerShell Script
 | Network connections | Sockets owned by the collector's processes, the analyst's WinRM (5985/5986) connection, and the exact SSH client IP:port |
 | Linux auth / sudo lines | `Accepted ... from <ip> port <port>` for this SSH session, the matching PAM session lines, and `sudo ... COMMAND=python3 -` |
 
+Time-based rules also cover **earlier collections of the same host**: each dataset in the dashboard contributes its start time and collecting user, so a later dataset hides that run's logons, module loads and 4103/4688 entries too, within 15 minutes of its start. Live sockets are only ever matched to the current run.
+
 The collectors record their own PID and true UTC start time in `CollectionContext`, and the Linux collector also records `SSH_CLIENT`. Datasets collected before this feature lack those fields, so for them only the signature-based rules apply (script-block text, the `python3 -` process tree, sudo lines).
 
 > **Analyst note:** hiding is display-only. Raw JSON/CSV exports and `data.js` still contain everything. If you suspect an attacker has deliberately reused the collector's account or session, untick the option and review the rows it hides.
