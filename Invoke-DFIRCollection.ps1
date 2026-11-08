@@ -3522,18 +3522,25 @@ $HtmlContent = @'
             }
         }
         
-        function renderFlaggedItems() {
-            const container = document.getElementById('tableContainer');
+        // Flagged items in the current view: the selected host/dataset, or everything
+        // when "Include all hosts and historical datasets" is checked.
+        function getScopedFlaggedItems() {
             let flags = getFlaggedItems();
-            
             if (!window.showAllFlaggedHosts && selectedHostname) {
                   const curTs = (typeof currentComputer !== 'undefined' && currentComputer ? currentComputer.Timestamp || '' : '');
                   flags = flags.filter(f => f.system === selectedHostname && (!f.timestamp || f.timestamp === curTs));
             }
-            
+            return flags;
+        }
+
+        function renderFlaggedItems() {
+            const container = document.getElementById('tableContainer');
+            const flags = getScopedFlaggedItems();
+
             const toggleHtml = `
-            <div style="margin-bottom: 15px; display:flex; gap:15px; align-items:center;">
+            <div style="margin-bottom: 15px; display:flex; gap:15px; align-items:center; flex-wrap:wrap;">
                 <button onclick="exportFlaggedItems()" style="background:var(--accent); color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; font-weight:bold; transition: background 0.2s;">&#128190; Export Flagged Items to CSV</button>
+                <button onclick="openHuntQueryBuilder()" ${flags.length === 0 ? 'disabled' : ''} title="Build a KQL / ES|QL query that sweeps the enterprise (Elastic / Security Onion) for the indicators in these flagged items" style="background:var(--accent); color:white; border:none; padding:8px 15px; border-radius:4px; cursor:${flags.length === 0 ? 'not-allowed' : 'pointer'}; opacity:${flags.length === 0 ? '0.5' : '1'}; font-weight:bold; transition: background 0.2s;">&#128269; Build Hunt Query (KQL / ES|QL)</button>
                 <label style="color:var(--text-main); font-weight:bold; cursor:pointer; display:flex; align-items:center;">
                     <input type="checkbox" style="margin-right:6px;" ${window.showAllFlaggedHosts ? 'checked' : ''} onchange="toggleFlaggedHosts(this.checked)"> 
                     Include all hosts and historical datasets
@@ -3572,11 +3579,7 @@ $HtmlContent = @'
         }
 
         function exportFlaggedItems() {
-            let flags = getFlaggedItems();
-            if (!window.showAllFlaggedHosts && selectedHostname) {
-                  const curTs = (typeof currentComputer !== 'undefined' && currentComputer ? currentComputer.Timestamp || '' : '');
-                  flags = flags.filter(f => f.system === selectedHostname && (!f.timestamp || f.timestamp === curTs));
-            }
+            const flags = getScopedFlaggedItems();
             if (flags.length === 0) return;
             
             let csvContent = "data:text/csv;charset=utf-8,";
@@ -3607,6 +3610,488 @@ $HtmlContent = @'
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+        }
+
+        // ===================== Hunt Query Builder (KQL / ES|QL) =====================
+        // Turns flagged artifacts into an enterprise-wide IOC sweep using ECS field
+        // names (Elastic Agent, Winlogbeat/Sysmon, Zeek/Suricata in Security Onion),
+        // so the query can be pasted straight into Kibana / SO Hunt / Discover.
+        //   match: 'exact'    -> field : ("a" or "b")      | field IN ("a", "b")
+        //          'contains' -> field : (*a* or *b*)      | field LIKE "*a*"
+        //          'ip'       -> field : ("1.2.3.4" ...)   | CIDR_MATCH(field, "1.2.3.4/32", ...)
+        // `off` fields start disabled (less common / often unmapped, which makes ES|QL error).
+        const HUNT_TYPES = [
+            { id:'sha256',   label:'SHA256 hashes',          match:'exact',    fields:['process.hash.sha256','file.hash.sha256','hash.sha256','dll.hash.sha256'], off:['dll.hash.sha256'] },
+            { id:'ip',       label:'IP addresses',           match:'ip',       fields:['source.ip','destination.ip'] },
+            { id:'domain',   label:'Domains',                match:'exact',    fields:['dns.question.name','dns.query.name','destination.domain','url.domain'], off:['url.domain'] },
+            { id:'exe',      label:'Executable paths',       match:'exact',    fields:['process.executable','process.parent.executable','file.path'], off:['process.parent.executable'] },
+            { id:'pname',    label:'Process / file names',   match:'exact',    fields:['process.name','file.name'] },
+            { id:'cmdline',  label:'Command-line fragments', match:'contains', fields:['process.command_line','powershell.file.script_block_text'], off:['powershell.file.script_block_text'] },
+            { id:'file',     label:'File paths',             match:'exact',    fields:['file.path'] },
+            { id:'regvalue', label:'Registry value names',   match:'exact',    fields:['registry.value'] },
+            { id:'regdata',  label:'Registry data',          match:'exact',    fields:['registry.data.strings'] },
+            { id:'service',  label:'Service names',          match:'exact',    fields:['service.name','winlog.event_data.ServiceName'] },
+            { id:'task',     label:'Scheduled task names',   match:'contains', fields:['winlog.event_data.TaskName'] },
+            { id:'user',     label:'User accounts',          match:'exact',    fields:['user.name','winlog.event_data.TargetUserName'] },
+            { id:'image',    label:'Container images',       match:'exact',    fields:['container.image.name'] }
+        ];
+        const HUNT_KNOWN_CATEGORIES = ['Processes','NetworkConnections','Services','Drivers','ScheduledTasks','SystemPersistence','StartupFiles','RecycleBin','ExecutionEvidence','EventLogs','DNSCache','RDPConnections','LocalUsers','PrivilegedAccess','LoggedinUsers','FirewallRules','ArpTable','DockerContainers'];
+        // Values that would match half the enterprise: still listed, but unchecked by default.
+        const HUNT_COMMON_NAMES = new Set(['powershell.exe','pwsh.exe','cmd.exe','svchost.exe','rundll32.exe','regsvr32.exe','mshta.exe','wscript.exe','cscript.exe','explorer.exe','conhost.exe','services.exe','lsass.exe','winlogon.exe','csrss.exe','smss.exe','wininit.exe','taskhostw.exe','dllhost.exe','msiexec.exe','wmiprvse.exe','schtasks.exe','sc.exe','net.exe','net1.exe','reg.exe','chrome.exe','msedge.exe','firefox.exe','onedrive.exe','teams.exe','bash','sh','zsh','dash','python','python3','perl','sudo','sshd','systemd','cron','crond','nginx','apache2','httpd','java','node']);
+        const HUNT_COMMON_USERS = new Set(['administrator','admin','root','system','local service','network service','guest','defaultaccount','wdagutilityaccount','nobody','daemon','www-data']);
+        const HUNT_COMMON_REGVALUES = new Set(['debugger','(default)','default','userinit','shell','appinit_dlls']);
+        const HUNT_IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+        const HUNT_URL_RE = /\b(?:https?|ftp):\/\/([^\/\s:'"`<>()\[\]]+)/gi;
+
+        window.huntPrefs = (function(){
+            const def = { lang:'kql', index:'logs-*', summarize:true, excludeHosts:false, fieldsOff:null };
+            try { return Object.assign(def, JSON.parse(localStorage.getItem('ffs_hunt_prefs') || '{}')); } catch(e) { return def; }
+        })();
+        if (!Array.isArray(window.huntPrefs.fieldsOff)) {
+            window.huntPrefs.fieldsOff = [];
+            HUNT_TYPES.forEach(t => (t.off || []).forEach(f => window.huntPrefs.fieldsOff.push(t.id + '|' + f)));
+        }
+        function huntSavePrefs() { try { localStorage.setItem('ffs_hunt_prefs', JSON.stringify(window.huntPrefs)); } catch(e) {} }
+
+        function huntEsc(s) {
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+        function huntBasename(p) { return String(p || '').replace(/["']/g,'').split(/[\\\/]/).pop().trim(); }
+
+        // Expand the path prefixes Windows uses in service/driver ImagePaths so they line up with logged paths.
+        function huntNormPath(p) {
+            p = String(p || '').trim().replace(/^"(.*)"$/, '$1');
+            p = p.replace(/^\\\?\?\\/, '');
+            p = p.replace(/^%systemroot%/i, 'C:\\Windows').replace(/^%windir%/i, 'C:\\Windows').replace(/^\\SystemRoot/i, 'C:\\Windows');
+            if (/^system32\\/i.test(p)) p = 'C:\\Windows\\' + p;
+            return p;
+        }
+        // Pull the executable path out of a command string ("C:\a b\x.exe" -arg, C:\x.exe /s, /usr/bin/x -y).
+        function huntExePath(cmd) {
+            cmd = huntNormPath(cmd);
+            if (!cmd) return '';
+            let m = cmd.match(/^"([^"]+)"/);
+            if (m) return m[1];
+            m = cmd.match(/^([a-z]:\\.*?\.(?:exe|dll|sys|com|scr|bat|cmd|ps1|vbs|js|hta|msi|cpl))(?=\s|$)/i);
+            if (m) return m[1];
+            m = cmd.match(/^(\/[^\s;|&]+)/);
+            if (m) return m[1];
+            if (/^[a-z]:\\/i.test(cmd) && !/\s[-\/]/.test(cmd)) return cmd;
+            return '';
+        }
+        function huntNormIp(v) {
+            v = String(v || '').trim().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+            if (/^::ffff:\d+\./i.test(v)) v = v.substring(7);
+            const bare = v.split('/')[0].toLowerCase();
+            const v4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(bare) && bare.split('.').every(o => +o <= 255);
+            const v6 = !v4 && /^[0-9a-f:]+$/.test(bare) && (bare.includes('::') || bare.split(':').length === 8);
+            if (!v4 && !v6) return '';
+            if (v.includes('/') && !/^\d{1,3}$/.test(v.split('/')[1])) return '';
+            if (bare === '0.0.0.0' || bare === '255.255.255.255' || bare === '::' || bare === '::1' || /^127\./.test(bare) || /^(22[4-9]|23\d)\./.test(bare)) return '';
+            return v.toLowerCase();
+        }
+        function huntNormDomain(v) {
+            v = String(v || '').trim().toLowerCase().replace(/\.$/, '');
+            if (v === 'localhost' || huntNormIp(v)) return '';
+            return /^(?=.{4,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/.test(v) ? v : '';
+        }
+
+        // Guess the source artifact for rows flagged from views that don't keep it (e.g. Search Results).
+        function huntGuessCategory(d) {
+            const has = k => Object.prototype.hasOwnProperty.call(d, k);
+            if (has('RemoteAddress')) return 'NetworkConnections';
+            if (has('CommandLine') && (has('ProcessId') || has('Id'))) return 'Processes';
+            if (has('PathName') && has('Signed')) return 'Drivers';
+            if ((has('PathName') && has('StartMode')) || has('SubState')) return 'Services';
+            if (has('TaskName')) return 'ScheduledTasks';
+            if (has('ValueName') || has('KeyName')) return 'SystemPersistence';
+            if (has('EventId')) return 'EventLogs';
+            if (has('TimeToLive')) return 'DNSCache';
+            if (has('SourceIP') && has('Destination')) return 'RDPConnections';
+            if (has('OriginalPath')) return 'RecycleBin';
+            if (has('Executable')) return 'ExecutionEvidence';
+            if (has('RemoteIP')) return 'FirewallRules';
+            if (has('LinkLayerAddress')) return 'ArpTable';
+            if (has('Image')) return 'DockerContainers';
+            if (has('PrincipalSource')) return 'PrivilegedAccess';
+            if (has('Session') && (has('User') || has('Username'))) return 'LoggedinUsers';
+            if (has('LastLogon') || has('UID')) return 'LocalUsers';
+            if (has('Path') && has('SHA256')) return 'StartupFiles';
+            return '';
+        }
+
+        // Returns [{type, value, common}] for one flagged artifact.
+        function huntExtract(category, raw) {
+            const d = {};
+            Object.keys(raw || {}).forEach(k => {
+                if (k.startsWith('_')) return;
+                let v = raw[k];
+                if (v && typeof v === 'object' && v.Value !== undefined) v = v.Value;
+                if (v === null || v === undefined || typeof v === 'object') return;
+                const s = String(v).trim();
+                if (s && s !== '-' && s.toUpperCase() !== 'N/A') d[k] = s;
+            });
+            const T = k => d[k] || '';
+            const out = [];
+            const add = (type, value) => {
+                let v = String(value || '').trim();
+                if (!v) return;
+                let common = false;
+                switch (type) {
+                    case 'sha256': v = v.toLowerCase(); if (!/^[a-f0-9]{64}$/.test(v)) return; break;
+                    case 'ip':     v = huntNormIp(v); if (!v) return; break;
+                    case 'domain': v = huntNormDomain(v); if (!v) return; break;
+                    case 'exe':
+                    case 'file':
+                        v = huntNormPath(v);
+                        if (!/[\\\/]/.test(v) || v.includes('%')) return;
+                        if (type === 'exe') common = HUNT_COMMON_NAMES.has(huntBasename(v).toLowerCase());
+                        break;
+                    case 'pname':
+                        v = huntBasename(v);
+                        if (v.length < 2) return;
+                        common = HUNT_COMMON_NAMES.has(v.toLowerCase());
+                        break;
+                    case 'cmdline': if (v.length < 6 || huntExePath(v) === huntNormPath(v)) return; break; // skip bare exe paths (already covered)
+                    case 'user':
+                        v = v.replace(/^.*\\/, '');
+                        if (!v || v.endsWith('$')) return;
+                        common = HUNT_COMMON_USERS.has(v.toLowerCase());
+                        break;
+                    case 'regvalue': common = HUNT_COMMON_REGVALUES.has(v.toLowerCase()); break;
+                }
+                out.push({ type, value: v, common });
+            };
+            const scanText = text => {
+                if (!text) return;
+                (String(text).match(HUNT_IPV4_RE) || []).forEach(ip => add('ip', ip));
+                let m; HUNT_URL_RE.lastIndex = 0;
+                while ((m = HUNT_URL_RE.exec(String(text))) !== null) {
+                    if (huntNormIp(m[1])) add('ip', m[1]); else add('domain', m[1]);
+                }
+            };
+            const addExeAndName = cmd => {
+                const exe = huntExePath(cmd);
+                if (exe && /[\\\/]/.test(exe)) add('exe', exe);
+                add('pname', huntBasename(exe || String(cmd || '').split(/\s/)[0]));
+            };
+
+            const cat = HUNT_KNOWN_CATEGORIES.includes(category) ? category : (huntGuessCategory(d) || category);
+            add('sha256', T('SHA256') || T('Hash'));
+            switch (cat) {
+                case 'Processes':
+                    add('exe', T('Path')); add('pname', T('Name')); add('cmdline', T('CommandLine'));
+                    break;
+                case 'NetworkConnections':
+                    add('ip', T('RemoteAddress')); add('exe', T('ProcessPath')); add('pname', T('ProcessName'));
+                    break;
+                case 'Services':
+                    add('service', T('Name')); if (T('PathName')) addExeAndName(T('PathName'));
+                    break;
+                case 'Drivers':
+                    add('service', T('Name')); add('file', huntExePath(T('PathName')) || T('PathName'));
+                    break;
+                case 'ScheduledTasks': {
+                    add('task', T('TaskName').replace(/^.*\\/, ''));
+                    if (T('Command')) addExeAndName(T('Command'));
+                    if (T('Arguments')) add('cmdline', T('Arguments'));
+                    else if (/\s/.test(T('Command'))) add('cmdline', T('Command'));
+                    break;
+                }
+                case 'SystemPersistence':
+                    if (T('ValueName')) add('regvalue', T('ValueName'));
+                    if (T('Data')) {
+                        add('regdata', T('Data'));
+                        addExeAndName(T('Data'));
+                        if (huntExePath(T('Data')) !== huntNormPath(T('Data'))) add('cmdline', T('Data')); // has arguments / not a bare path
+                    }
+                    if (T('ValueData') && /^\//.test(T('ValueData'))) add('file', T('ValueData').split(/\s/)[0]);
+                    break;
+                case 'StartupFiles':
+                    add('file', T('Path')); add('pname', T('Path'));
+                    break;
+                case 'RecycleBin':
+                    add('file', T('OriginalPath')); add('pname', T('OriginalPath'));
+                    break;
+                case 'ExecutionEvidence': {
+                    const ex = T('Executable');
+                    if (/^([a-z]:\\|\/)/i.test(ex) && !/[|;]/.test(ex)) { add('exe', huntExePath(ex) || ex); add('pname', huntExePath(ex) || ex); }
+                    else if (/^[^\\\/\s]+\.(exe|dll|com|scr|bat|ps1)$/i.test(ex)) add('pname', ex);
+                    else if (ex) add('cmdline', ex);
+                    break;
+                }
+                case 'EventLogs':
+                    add('ip', T('IpAddress')); add('ip', T('SourceIP'));
+                    add('user', T('TargetUserName')); add('user', T('SubjectUserName')); add('user', T('Username'));
+                    add('exe', T('NewProcessName')); add('exe', T('ParentProcessName')); add('exe', T('Image'));
+                    add('cmdline', T('CommandLine'));
+                    add('service', T('ServiceName')); if (T('ServiceFileName')) addExeAndName(T('ServiceFileName'));
+                    add('task', T('TaskName').replace(/^.*\\/, ''));
+                    break;
+                case 'DNSCache':
+                    add('domain', T('Name')); add('domain', T('Entry')); add('ip', T('Data'));
+                    break;
+                case 'RDPConnections':
+                    add('ip', T('SourceIP')); add('user', T('User'));
+                    break;
+                case 'LocalUsers':
+                case 'PrivilegedAccess':
+                case 'LoggedinUsers':
+                    add('user', T('Name') || T('Username') || T('User'));
+                    break;
+                case 'FirewallRules':
+                    T('RemoteIP').split(/[,;\s]+/).forEach(ip => add('ip', ip));
+                    break;
+                case 'ArpTable':
+                    add('ip', T('IPAddress'));
+                    break;
+                case 'DockerContainers':
+                    add('image', T('Image'));
+                    break;
+                default:
+                    Object.keys(d).forEach(k => scanText(d[k]));
+            }
+            ['CommandLine','Arguments','Command','Data','ValueData','ScriptBlockText','Details','Message'].forEach(k => scanText(T(k)));
+            return out;
+        }
+
+        // Build {groups:[{type, values:[{value, common, systems:[], count}]}], hosts, itemCount, emptyCats}
+        function huntBuildModel(flags) {
+            const byType = {};
+            const hosts = new Set();
+            const emptyCats = {};
+            flags.forEach(f => {
+                if (f.system) hosts.add(f.system);
+                const iocs = huntExtract(f.category, f.data);
+                if (iocs.length === 0) { emptyCats[f.category] = (emptyCats[f.category] || 0) + 1; return; }
+                iocs.forEach(i => {
+                    const bucket = byType[i.type] = byType[i.type] || new Map();
+                    const key = (i.type === 'sha256' || i.type === 'ip' || i.type === 'domain') ? i.value : i.value.toLowerCase();
+                    let e = bucket.get(key);
+                    if (!e) { e = { value: i.value, common: i.common, systems: new Set(), count: 0 }; bucket.set(key, e); }
+                    e.count++;
+                    if (f.system) e.systems.add(f.system);
+                });
+            });
+            const groups = HUNT_TYPES.filter(t => byType[t.id]).map(t => ({
+                type: t,
+                values: Array.from(byType[t.id].values()).map(e => Object.assign(e, { systems: Array.from(e.systems) }))
+            }));
+            return { groups, hosts: Array.from(hosts), itemCount: flags.length, emptyCats };
+        }
+
+        function huntIsSelected(typeId, v) {
+            const k = typeId + '|' + v.value;
+            const o = window.huntSel[k];
+            return o === undefined ? !v.common : o;
+        }
+        function huntFieldOn(typeId, field) { return !window.huntPrefs.fieldsOff.includes(typeId + '|' + field); }
+
+        // ---- Query generation ----
+        function huntKqlQuoted(v) { return '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
+        // Unquoted KQL wildcard term: escape KQL specials and whitespace; newlines become a wildcard.
+        function huntKqlContains(v) {
+            const esc = String(v).split(/[\r\n\t]+/).map(part => part.replace(/[\\():<>"*{}]/g, '\\$&').replace(/ /g, '\\ ')).join('*');
+            return '*' + esc + '*';
+        }
+        function huntEsqlStr(v) { return '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t') + '"'; }
+        function huntEsqlLike(v) {
+            const pat = String(v).split(/[\r\n\t]+/).map(part => part.replace(/[\\*?]/g, '\\$&')).join('*');
+            return huntEsqlStr('*' + pat + '*');
+        }
+        function huntCidr(ip) { return ip.includes('/') ? ip : ip + (ip.includes(':') ? '/128' : '/32'); }
+
+        function huntGenerate(model) {
+            const p = window.huntPrefs;
+            const clauses = [];
+            let indicatorCount = 0;
+            model.groups.forEach(g => {
+                const vals = g.values.filter(v => huntIsSelected(g.type.id, v)).map(v => v.value);
+                const fields = g.type.fields.filter(f => huntFieldOn(g.type.id, f));
+                if (vals.length === 0 || fields.length === 0) return;
+                indicatorCount += vals.length;
+                fields.forEach(f => {
+                    if (p.lang === 'kql') {
+                        const list = g.type.match === 'contains' ? vals.map(huntKqlContains) : vals.map(huntKqlQuoted);
+                        clauses.push(f + ' : (' + list.join(' or ') + ')');
+                    } else if (g.type.match === 'ip') {
+                        clauses.push('CIDR_MATCH(' + f + ', ' + vals.map(v => huntEsqlStr(huntCidr(v))).join(', ') + ')');
+                    } else if (g.type.match === 'contains') {
+                        vals.forEach(v => clauses.push(f + ' LIKE ' + huntEsqlLike(v)));
+                    } else {
+                        clauses.push(f + ' IN (' + vals.map(huntEsqlStr).join(', ') + ')');
+                    }
+                });
+            });
+            if (clauses.length === 0) return { text: '', indicatorCount: 0 };
+
+            const hostVals = Array.from(new Set(model.hosts.flatMap(h => [h, h.toLowerCase()])));
+            let text;
+            if (p.lang === 'kql') {
+                text = clauses.join('\nor ');
+                if (p.excludeHosts && hostVals.length) {
+                    text = '(\n  ' + clauses.join('\n  or ') + '\n)\nand not host.name : (' + hostVals.map(huntKqlQuoted).join(' or ') + ')';
+                }
+            } else {
+                const idx = (p.index || 'logs-*').trim() || 'logs-*';
+                const lines = [
+                    '// Flash Forensics hunt: ' + indicatorCount + ' indicator(s) from ' + model.itemCount + ' flagged item(s)',
+                    'FROM ' + idx,
+                    '| WHERE ' + clauses.join('\n    OR ')
+                ];
+                if (p.excludeHosts && hostVals.length) lines.push('| WHERE host.name IS NULL OR host.name NOT IN (' + hostVals.map(huntEsqlStr).join(', ') + ')');
+                if (p.summarize) {
+                    lines.push('| STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY host.name');
+                    lines.push('| SORT hits DESC');
+                } else {
+                    lines.push('| SORT @timestamp DESC');
+                }
+                lines.push('| LIMIT 1000');
+                text = lines.join('\n');
+            }
+            return { text, indicatorCount };
+        }
+
+        // ---- Modal UI ----
+        function openHuntQueryBuilder() {
+            const flags = getScopedFlaggedItems();
+            if (flags.length === 0) return;
+            window.huntModel = huntBuildModel(flags);
+            window.huntSel = {};
+            let overlay = document.getElementById('huntOverlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'huntOverlay';
+                overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.55); backdrop-filter:blur(4px); z-index:999; display:flex; align-items:center; justify-content:center;';
+                overlay.onclick = closeHuntQueryBuilder;
+                document.body.appendChild(overlay);
+                document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('huntOverlay').style.display !== 'none') closeHuntQueryBuilder(); });
+            }
+            overlay.style.display = 'flex';
+            renderHuntModal();
+        }
+        function closeHuntQueryBuilder() {
+            const o = document.getElementById('huntOverlay');
+            if (o) o.style.display = 'none';
+        }
+
+        function renderHuntModal() {
+            const overlay = document.getElementById('huntOverlay');
+            const model = window.huntModel;
+            const p = window.huntPrefs;
+            const listEl = document.getElementById('huntIndicatorList');
+            const keepScroll = listEl ? listEl.scrollTop : 0;
+            const q = huntGenerate(model);
+            const totalVals = model.groups.reduce((n, g) => n + g.values.length, 0);
+
+            const segBtn = (lang, label) => `<button onclick="huntSet('lang','${lang}')" style="padding:6px 16px; border:1px solid var(--accent); cursor:pointer; font-weight:bold; background:${p.lang === lang ? 'var(--accent)' : 'transparent'}; color:${p.lang === lang ? 'white' : 'var(--text-main)'}; border-radius:${lang === 'kql' ? '4px 0 0 4px' : '0 4px 4px 0'};">${label}</button>`;
+
+            let groupsHtml = '';
+            model.groups.forEach((g, gi) => {
+                const selCount = g.values.filter(v => huntIsSelected(g.type.id, v)).length;
+                const chips = g.type.fields.map((f, fi) => {
+                    const on = huntFieldOn(g.type.id, f);
+                    return `<span onclick="huntToggleField(${gi},${fi})" title="${on ? 'Click to exclude this field' : 'Click to include this field'}" style="cursor:pointer; font-family:monospace; font-size:0.75rem; padding:2px 7px; border-radius:10px; border:1px solid ${on ? 'var(--accent)' : 'var(--glass-border)'}; color:${on ? 'var(--accent-hover)' : 'var(--text-muted)'}; text-decoration:${on ? 'none' : 'line-through'}; opacity:${on ? '1' : '0.6'};">${huntEsc(f)}</span>`;
+                }).join(' ');
+                const rows = g.values.map((v, vi) => {
+                    const sel = huntIsSelected(g.type.id, v);
+                    const hostsTxt = v.systems.join(', ');
+                    return `<label style="display:flex; gap:8px; align-items:flex-start; padding:3px 0; cursor:pointer; opacity:${sel ? '1' : '0.55'};">
+                        <input type="checkbox" ${sel ? 'checked' : ''} onchange="huntToggleValue(${gi},${vi},this.checked)" style="margin-top:3px;">
+                        <code style="font-size:0.8rem; color:var(--text-main); word-break:break-all; flex:1; min-width:0;">${huntEsc(v.value.length > 300 ? v.value.substring(0, 300) + ' ...' : v.value)}</code>
+                        ${v.common ? '<span title="Common value: likely to match many benign hosts, so it starts unchecked" style="font-size:0.7rem; color:#fbbf24; border:1px solid rgba(251,191,36,0.5); border-radius:3px; padding:0 4px; white-space:nowrap;">common</span>' : ''}
+                        <span title="${huntEsc(hostsTxt)}" style="font-size:0.72rem; color:var(--text-muted); white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis;">${huntEsc(hostsTxt)}</span>
+                    </label>`;
+                }).join('');
+                groupsHtml += `<div style="border:1px solid var(--glass-border); border-radius:8px; padding:10px 12px; margin-bottom:10px; background:rgba(0,0,0,0.15);">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:bold; color:var(--accent-hover);">
+                            <input type="checkbox" ${selCount > 0 ? 'checked' : ''} onchange="huntToggleGroup(${gi},this.checked)">
+                            ${huntEsc(g.type.label)}
+                        </label>
+                        <span style="font-size:0.75rem; color:var(--text-muted);">${selCount}/${g.values.length} selected &middot; ${g.type.match === 'contains' ? 'contains match' : 'exact match'}</span>
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px;">${chips}</div>
+                    ${rows}
+                </div>`;
+            });
+            if (!groupsHtml) groupsHtml = '<div class="empty-state" style="padding:20px;">None of the flagged items contain searchable indicators (hashes, IPs, domains, paths, command lines, accounts...).</div>';
+
+            const emptyKeys = Object.keys(model.emptyCats);
+            const emptyNote = emptyKeys.length ? `<div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:8px;">No searchable indicators in: ${emptyKeys.map(k => huntEsc(k) + ' (' + model.emptyCats[k] + ')').join(', ')}</div>` : '';
+
+            const esqlOpts = p.lang === 'esql' ? `
+                <label style="display:flex; align-items:center; gap:6px;">Index pattern
+                    <input type="text" value="${huntEsc(p.index)}" onchange="huntSet('index', this.value)" style="width:160px; padding:4px 6px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); color:var(--text-main); border-radius:4px; font-family:monospace;">
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" ${p.summarize ? 'checked' : ''} onchange="huntSet('summarize', this.checked)"> Summarize hits by host</label>` : '';
+
+            const note = p.lang === 'kql'
+                ? 'Paste into the Kibana / Security Onion search bar (KQL) and pick a time range. Unmapped fields are ignored, so the query is safe on any index pattern. Matching on keyword fields is case-sensitive.'
+                : 'Paste into Discover in ES|QL mode (Elastic 8.11+). ES|QL errors with "Unknown column" if a field is not mapped in the target indices; click that field\'s chip above to drop it. Matching is case-sensitive.';
+
+            overlay.innerHTML = `
+            <div onclick="event.stopPropagation()" style="background:var(--bg-color); border:1px solid var(--glass-border); border-radius:12px; width:min(1100px, 94vw); max-height:92vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,0.6); position:relative; color:var(--text-main);">
+                <div style="padding:18px 22px 10px; border-bottom:1px solid var(--glass-border);">
+                    <div onclick="closeHuntQueryBuilder()" title="Close (Esc)" style="position:absolute; top:12px; right:18px; cursor:pointer; font-size:1.5rem; color:var(--text-muted); line-height:1;">&times;</div>
+                    <div style="font-size:1.2rem; font-weight:bold;">&#128269; Hunt Query Builder</div>
+                    <div style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">${model.itemCount} flagged item(s) from ${model.hosts.length} host(s) &rarr; ${totalVals} indicator(s) mapped to ECS fields. Uncheck values or click field chips to tune the sweep.</div>
+                </div>
+                <div id="huntIndicatorList" style="padding:12px 22px; overflow-y:auto; flex:1 1 auto; min-height:120px;">
+                    ${emptyNote}${groupsHtml}
+                </div>
+                <div style="padding:12px 22px 18px; border-top:1px solid var(--glass-border);">
+                    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-bottom:10px; font-size:0.85rem;">
+                        <div style="display:flex;">${segBtn('kql', 'KQL')}${segBtn('esql', 'ES|QL')}</div>
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;" title="Adds a host.name exclusion so results show only OTHER hosts with these indicators"><input type="checkbox" ${p.excludeHosts ? 'checked' : ''} onchange="huntSet('excludeHosts', this.checked)"> Exclude source host(s) (${model.hosts.map(huntEsc).join(', ')})</label>
+                        ${esqlOpts}
+                    </div>
+                    <textarea id="huntQueryText" spellcheck="false" style="width:100%; box-sizing:border-box; height:180px; background:rgba(0,0,0,0.35); color:var(--text-main); border:1px solid var(--glass-border); border-radius:6px; padding:10px; font-family:Consolas, monospace; font-size:0.82rem; resize:vertical;">${huntEsc(q.text || (p.lang === 'kql' ? '' : '// ') + 'No indicators selected')}</textarea>
+                    <div style="display:flex; align-items:center; gap:12px; margin-top:8px; flex-wrap:wrap;">
+                        <button onclick="huntCopy(this)" ${q.text ? '' : 'disabled'} style="background:var(--accent); color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; font-weight:bold;">&#128203; Copy ${p.lang === 'kql' ? 'KQL' : 'ES|QL'}</button>
+                        <span style="font-size:0.8rem; color:var(--text-muted);">${q.indicatorCount} indicator(s) selected</span>
+                    </div>
+                    <div style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">${note}</div>
+                </div>
+            </div>`;
+            const newList = document.getElementById('huntIndicatorList');
+            if (newList) newList.scrollTop = keepScroll;
+        }
+
+        function huntSet(key, val) {
+            window.huntPrefs[key] = val;
+            huntSavePrefs();
+            renderHuntModal();
+        }
+        function huntToggleValue(gi, vi, checked) {
+            const g = window.huntModel.groups[gi];
+            window.huntSel[g.type.id + '|' + g.values[vi].value] = checked;
+            renderHuntModal();
+        }
+        function huntToggleGroup(gi, checked) {
+            const g = window.huntModel.groups[gi];
+            g.values.forEach(v => { window.huntSel[g.type.id + '|' + v.value] = checked; });
+            renderHuntModal();
+        }
+        function huntToggleField(gi, fi) {
+            const t = window.huntModel.groups[gi].type;
+            const k = t.id + '|' + t.fields[fi];
+            const off = window.huntPrefs.fieldsOff;
+            const i = off.indexOf(k);
+            if (i >= 0) off.splice(i, 1); else off.push(k);
+            huntSavePrefs();
+            renderHuntModal();
+        }
+        function huntCopy(btn) {
+            const ta = document.getElementById('huntQueryText');
+            if (!ta) return;
+            let ok = false;
+            ta.focus(); ta.select();
+            try { ok = document.execCommand('copy'); } catch(e) {}
+            if (!ok && navigator.clipboard) { try { navigator.clipboard.writeText(ta.value); ok = true; } catch(e) {} }
+            const old = btn.innerHTML;
+            btn.innerHTML = ok ? '&#10004; Copied!' : 'Press Ctrl+C';
+            setTimeout(() => { btn.innerHTML = old; }, 1500);
         }
 
         function initResizers() {
