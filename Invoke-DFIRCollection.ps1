@@ -1382,6 +1382,35 @@ $HtmlContent = @'
             });
         }
 
+        // ---- Dataset collection time ----
+        // Windows builds before the fix stamped Timestamp with host-LOCAL time plus a literal "Z".
+        // Timestamp stays each dataset's identity (flags, diff selection, dataset picker values);
+        // these helpers give the true time for sorting and labels. Function declarations only:
+        // initApp() runs before later top-level const/let are initialized.
+        function datasetIsLinux(sys) {
+            const ctx = (sys && sys.CollectionContext) || {};
+            if (ctx.Platform) return ctx.Platform === 'Linux';
+            const si = sys && Array.isArray(sys.SystemInfo) ? sys.SystemInfo : [];
+            return si.some(s => Object.values(s || {}).join(' ').toLowerCase().includes('linux'));
+        }
+        // Linux Timestamps were always UTC; Windows ones are UTC once StartTimeUtc is recorded.
+        function datasetTimeIsUtc(sys) {
+            return datasetIsLinux(sys) || !!(sys && sys.CollectionContext && sys.CollectionContext.StartTimeUtc);
+        }
+        function datasetSortTime(sys) {
+            const ctx = (sys && sys.CollectionContext) || {};
+            const t = Date.parse(ctx.StartTimeUtc || (sys && sys.Timestamp) || '');
+            return isNaN(t) ? -Infinity : t;
+        }
+        function datasetLabel(sys) {
+            if (!sys) return 'Unknown Time';
+            const ctx = sys.CollectionContext || {};
+            if (ctx.StartTimeUtc) return ctx.StartTimeUtc;
+            if (!sys.Timestamp) return 'Unknown Time';
+            // Legacy Windows dataset: the offset was never recorded, so say what it really is.
+            return datasetTimeIsUtc(sys) ? sys.Timestamp : String(sys.Timestamp).replace(/Z$/, '') + ' (host local time)';
+        }
+
         function initApp() {
             let systems = Array.isArray(dfirData) ? dfirData : [dfirData];
             
@@ -1427,10 +1456,10 @@ $HtmlContent = @'
             });
             
             Object.keys(groupedSystems).forEach(name => {
+                // Newest first by true collection time (string order breaks when legacy
+                // local-time Windows stamps are mixed with UTC ones).
                 groupedSystems[name].sort((a,b) => {
-                    let ta = a.Timestamp || "";
-                    let tb = b.Timestamp || "";
-                    return tb.localeCompare(ta);
+                    return (datasetSortTime(b) - datasetSortTime(a)) || String(b.Timestamp || '').localeCompare(String(a.Timestamp || ''));
                 });
                 
                 let os = 'Windows';
@@ -1479,13 +1508,13 @@ $HtmlContent = @'
             }
             const runs = groupedSystems[selectedHostname];
             if (runs.length <= 1) {
-                badgeContainer.innerHTML = runs[0].Timestamp ? `<span style="margin-left:10px;">Collected: ${runs[0].Timestamp}</span>` : '';
+                badgeContainer.innerHTML = runs[0].Timestamp ? `<span style="margin-left:10px;">Collected: ${datasetLabel(runs[0])}</span>` : '';
                 return;
             }
 
             if (!window.isDiffMode) {
                 let selectHtml = `<select id="datasetSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="selectDatasetByTimestamp(this.value)">`;
-                runs.forEach(r => { selectHtml += `<option value="${r.Timestamp || ''}">${r.Timestamp || 'Unknown Time'}</option>`; });
+                runs.forEach(r => { selectHtml += `<option value="${r.Timestamp || ''}">${datasetLabel(r)}</option>`; });
                 selectHtml += `</select>`;
                 selectHtml += `<button onclick="toggleDiffMode()" style="margin-left:10px; padding:3px 10px; background:var(--accent); color:white; border:none; border-radius:4px; cursor:pointer;">Diff Timelines</button>`;
                 badgeContainer.innerHTML = selectHtml;
@@ -1495,11 +1524,11 @@ $HtmlContent = @'
                 }
             } else {
                 let bHtml = `<select id="diffBaseSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="window.diffBaseTs=this.value; switchTab(currentTab);">`;
-                runs.forEach(r => { bHtml += `<option value="${r.Timestamp || ''}" ${r.Timestamp === window.diffBaseTs ? 'selected' : ''}>Base: ${r.Timestamp || 'Unknown Time'}</option>`; });
+                runs.forEach(r => { bHtml += `<option value="${r.Timestamp || ''}" ${r.Timestamp === window.diffBaseTs ? 'selected' : ''}>Base: ${datasetLabel(r)}</option>`; });
                 bHtml += `</select>`;
                 
                 let tHtml = `<select id="diffTargetSelect" style="background:var(--bg-color); color:var(--text-main); border:1px solid var(--glass-border); border-radius:4px; padding:3px 8px; margin-left:10px; font-family:inherit;" onchange="window.diffTargetTs=this.value; switchTab(currentTab);">`;
-                runs.forEach(r => { tHtml += `<option value="${r.Timestamp || ''}" ${r.Timestamp === window.diffTargetTs ? 'selected' : ''}>Target: ${r.Timestamp || 'Unknown Time'}</option>`; });
+                runs.forEach(r => { tHtml += `<option value="${r.Timestamp || ''}" ${r.Timestamp === window.diffTargetTs ? 'selected' : ''}>Target: ${datasetLabel(r)}</option>`; });
                 tHtml += `</select>`;
                 
                 let selectHtml = bHtml + tHtml + `<button onclick="toggleDiffMode()" style="margin-left:10px; padding:3px 10px; background:var(--danger); color:white; border:none; border-radius:4px; cursor:pointer;">Exit Diff</button>`;
@@ -1674,7 +1703,7 @@ $HtmlContent = @'
             
             systemsToSearch.forEach((sys, idx) => {
                 const sysBaseName = sys.ComputerName || sys.PSComputerName || `Unknown-${idx}`;
-                const sysName = searchAllTime ? `${sysBaseName} (${sys.Timestamp || 'Unknown Time'})` : sysBaseName;
+                const sysName = searchAllTime ? `${sysBaseName} (${datasetLabel(sys)})` : sysBaseName;
                 
                 categories.forEach(cat => {
                     const dataArray = sys[cat];

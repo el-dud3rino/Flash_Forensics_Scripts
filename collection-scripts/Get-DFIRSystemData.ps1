@@ -18,6 +18,10 @@ if ($EventDaysMap.ContainsKey($env:COMPUTERNAME)) {
     PSCustomObject containing the collected datasets.
 #>
 
+# One UTC clock reading for both the dataset Timestamp and CollectionContext.StartTimeUtc.
+# (Get-Date alone is local time; a literal "Z" in the format string does not convert it.)
+$CollectionStartUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
 $Results = @{
     ComputerName = $env:COMPUTERNAME
     PSComputerName = $env:COMPUTERNAME
@@ -45,7 +49,7 @@ $Results = @{
     RecycleBin = @()
     Drivers = @()
     DefenderSecurity = @()
-    Timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+    Timestamp = $CollectionStartUtc
     CollectionContext = $(
         # Record whether the payload ran with a full (elevated) administrator token.
         # Admin-only artifacts (Defender, Security log, all-SID Recycle Bin, USBSTOR,
@@ -62,10 +66,10 @@ $Results = @{
             IsElevated = $ctxAdmin
             Privilege  = if ($ctxAdmin) { "Administrator" } else { "Standard User" }
             # Self-identification so the dashboard can hide this run's own traces
-            # (process tree, sockets, logon/4688/4103 events). StartTimeUtc is true UTC;
-            # the dataset Timestamp above is local time.
+            # (process tree, sockets, logon/4688/4103 events). Also marks the dataset as
+            # having a true-UTC Timestamp (older Windows builds stamped local time as "Z").
             ProcessId    = $PID
-            StartTimeUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            StartTimeUtc = $CollectionStartUtc
         }
     )
 }
