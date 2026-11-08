@@ -23,6 +23,7 @@ Each section includes a **Why / Abuse** note explaining the analytic reason for 
   - [Common Security Mistakes](#common-security-mistakes-2)
   - [Configuring Port Mirroring (SPAN)](#configuring-port-mirroring-span-1)
   - [Configuring NetFlow (softflowd)](#configuring-netflow-softflowd)
+- [Hunting Host Indicators in Network Telemetry](#hunting-host-indicators-in-network-telemetry)
 
 ---
 
@@ -205,3 +206,23 @@ Each section includes a **Why / Abuse** note explaining the analytic reason for 
   4. Set the **Host** to `<Security_Onion_IP>` and **Port** to `2055`.
   5. Select the **NetFlow Version** (v9 or IPFIX recommended).
   6. Save and apply. Verify flow reception on the ELK stack.
+
+---
+
+## Hunting Host Indicators in Network Telemetry
+- **Goal**: Use the indicators host analysts flagged in Flash Forensics to find every internal system that talked to the same infrastructure, using the SPAN/NetFlow visibility configured above.
+- **Description**: The Flash Forensics dashboard's **Flagged** tab has a **Build Hunt Query (KQL / ES|QL)** button. It turns flagged host artifacts into an ECS query that runs directly against Security Onion's Zeek, Suricata and flow data: IPs become `source.ip` / `destination.ip`, and domains become `dns.query.name` (Zeek in Security Onion) and `dns.question.name` (ECS). Network sensors usually have no `host.name`, so pivot on `source.ip` to identify the internal host.
+- **Why / Abuse**: Endpoint collection only covers hosts you have already touched. The network sensor sees every host that beacons to the same C2 (T1071 Application Layer Protocol, T1573 Encrypted Channel), resolves the same domain (T1071.004 DNS, T1568 Dynamic Resolution) or moves data to the same destination (T1041 Exfiltration Over C2 Channel). That includes unmanaged, IoT and network devices that endpoint tools can't reach. This is the quickest way to scope an intrusion past the hosts you have already triaged.
+- **Steps**:
+  1. Get the KQL from the host analyst (or build it yourself from the dashboard). For a network-only sweep, keep the **IP addresses** and **Domains** groups and untick the host-only groups (hashes, paths, registry, services, tasks).
+  2. In Security Onion **Hunt** or Kibana, paste the query and set the time range to cover the earliest host evidence.
+  3. Group by `source.ip` and `destination.ip` to list internal talkers, then by `event.dataset` (e.g. `zeek.conn`, `zeek.dns`, `zeek.ssl`, `zeek.http`, `suricata.alert`) to see which protocols were involved.
+  4. Check for beaconing: regular intervals, consistent `network.bytes`, long-lived `zeek.conn` sessions or repeated JA3/JA4 hashes in `zeek.ssl` are classic C2 patterns.
+  5. Hand every new internal IP back to the host team for Flash Forensics collection, and block confirmed infrastructure at the perimeter ACLs / firewall rules covered above.
+- **Commands** (Security Onion Hunt / Kibana, KQL):
+  - *Who talked to the C2 IP*: `destination.ip : "203.0.113.66" or source.ip : "203.0.113.66"`
+  - *Who resolved the domain*: `dns.query.name : "evil.example" or dns.question.name : "evil.example"`
+  - *TLS sessions to the domain (SNI)*: `ssl.server_name : "evil.example"`
+  - *Suricata alerts tied to the IP*: `event.dataset : "suricata.alert" and destination.ip : "203.0.113.66"`
+- **Commands** (Discover, ES|QL):
+  - `FROM logs-* | WHERE CIDR_MATCH(destination.ip, "203.0.113.66/32") | STATS sessions = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY source.ip | SORT sessions DESC`

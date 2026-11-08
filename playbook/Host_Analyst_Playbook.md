@@ -52,6 +52,11 @@ A recurring theme below is **file trust triage**. Wherever the collector records
   - [Docker Containers](#docker-containers-1)
   - [DNS Configuration](#dns-configuration)
   - [Event Logs](#event-logs-1)
+- [Enterprise Hunting (Flagged Items to KQL / ES|QL)](#enterprise-hunting-flagged-items-to-kql--esql)
+  - [Building the Hunt Query](#building-the-hunt-query)
+  - [Choosing Good Indicators](#choosing-good-indicators)
+  - [Triage the Results](#triage-the-results)
+  - [Manual Equivalents](#manual-equivalents)
 
 ## Windows Commands
 
@@ -414,3 +419,59 @@ A recurring theme below is **file trust triage**. Wherever the collector records
 - **Commands**:
   - `tail -n 500 /var/log/auth.log /var/log/secure`
   - `tail -n 500 /var/log/syslog /var/log/messages`
+
+---
+
+## Enterprise Hunting (Flagged Items to KQL / ES|QL)
+Everything above answers *"what happened on this host?"* The next question is always *"where else is this?"* The dashboard's **Hunt Query Builder** turns the items you flagged into a search you can run across the whole enterprise in an ELK stack or Security Onion, so one confirmed finding becomes a scoping sweep.
+
+### Building the Hunt Query
+- **Goal**: Sweep every host and sensor in the SIEM for the indicators found on the host(s) you triaged.
+- **Description**: On the **Flagged** tab, click **Build Hunt Query (KQL / ES|QL)**. The builder reads each flagged row and maps its indicators to ECS fields, which is what Elastic Agent, Winlogbeat/Sysmon and Security Onion's Zeek/Suricata pipelines use:
+  - SHA256 hashes -> `process.hash.sha256`, `file.hash.sha256`, `hash.sha256`
+  - Remote / source IPs, plus IPs and URL hosts found inside command lines, script blocks and event details -> `source.ip`, `destination.ip`
+  - Domains -> `dns.question.name`, `dns.query.name`, `destination.domain`
+  - Executable / file paths and names -> `process.executable`, `file.path`, `process.name`, `file.name`
+  - Command-line fragments (contains match) -> `process.command_line`
+  - Registry value names / data -> `registry.value`, `registry.data.strings`
+  - Service and scheduled task names -> `service.name`, `winlog.event_data.ServiceName`, `winlog.event_data.TaskName`
+  - Accounts -> `user.name`, `winlog.event_data.TargetUserName`
+- **Why / Abuse**: Intrusions are rarely one host. Adversaries reuse the same tooling, hashes, C2 infrastructure, persistence names and accounts as they move laterally (TA0008) and spread persistence (TA0003). A beacon to one IP (T1071), one encoded PowerShell task (T1053.005, T1059.001, T1027) or one masquerading binary like `svch0st.exe` (T1036.005) found on one host is a reliable way to find the *other* compromised hosts before you remediate. Remediating one host while the others stay infected tips off the adversary and leads to reinfection.
+- **Steps**:
+  1. Flag the suspicious rows (flag icon) while triaging. Add **Analyst Notes** as you go; they go into the CSV export, not into the query.
+  2. Open the **Flagged** tab. Tick **Include all hosts and historical datasets** if you want indicators from every triaged host in one sweep.
+  3. Click **Build Hunt Query**. Review the indicator list (see [Choosing Good Indicators](#choosing-good-indicators)).
+  4. Choose **KQL** for the Kibana / Security Onion search bar, or **ES|QL** for Discover in ES|QL mode.
+  5. Tick **Exclude source host(s)** so results show only *other* hosts. For ES|QL, leave **Summarize hits by host** on to get a hits / first seen / last seen table per host.
+  6. Click **Copy**, paste into Kibana / SO Hunt, and set the time range to cover the earliest evidence you have (go wider than you think).
+
+### Choosing Good Indicators
+- **Goal**: Keep the sweep high-signal so the results are actionable.
+- **Description**: Every value has a checkbox, and every ECS field is a clickable chip that includes or excludes it.
+- **Guidance**:
+  - **Strongest**: SHA256 of unsigned/unknown binaries, external C2 IPs and domains, unique file paths (`C:\Users\Public\...`, `/tmp/...`, `/dev/shm/...`), distinctive command-line fragments (encoded blobs, download cradles), and unique task/service/registry value names.
+  - **Weak / noisy**: LOLBin names (`powershell.exe`, `cmd.exe`, `rundll32.exe`), built-in accounts (`Administrator`, `root`), and internal infrastructure IPs (DCs, DNS servers). The builder tags these **common** and leaves them unchecked. Only tick them if they are the indicator, for example a specific compromised service account.
+  - Hashes of legitimate signed software (e.g. Chrome) show up everywhere. Untick them unless you are checking for a trojanized build.
+- **Notes**:
+  - **KQL** ignores fields that aren't mapped, so it is safe on any index pattern.
+  - **ES|QL** fails with `Unknown column` if a field isn't mapped in the target indices. Click that field's chip to drop it and copy again.
+  - Matching on paths, names and users is **case-sensitive**. If you expect case variation, also try a wildcard search by hand.
+
+### Triage the Results
+- **Goal**: Turn hits into a scoped list of affected hosts.
+- **Steps**:
+  1. Start with the ES|QL per-host summary. Every new `host.name` is a candidate for collection with Flash Forensics.
+  2. Rows with an empty `host.name` usually come from network sensors (Zeek/Suricata). Pivot on `source.ip` to find the internal host that talked to the indicator (see the Network Analyst Playbook, *Hunting Host Indicators in Network Telemetry*).
+  3. Compare `first_seen` across hosts to find patient zero and the order of spread. The earliest host is often where initial access happened.
+  4. Collect each new host with `Invoke-DFIRCollection.ps1`, flag what you find, and rebuild the hunt query. Repeat until the sweep finds no new hosts.
+
+### Manual Equivalents
+- **Goal**: Run the same sweep by hand when the dashboard isn't available.
+- **Commands** (Kibana / Security Onion Hunt, KQL):
+  - *Hash sweep*: `process.hash.sha256 : "<sha256>" or file.hash.sha256 : "<sha256>" or hash.sha256 : "<sha256>"`
+  - *C2 IP sweep*: `source.ip : "203.0.113.66" or destination.ip : "203.0.113.66"`
+  - *Domain sweep*: `dns.question.name : "evil.example" or dns.query.name : "evil.example"`
+  - *Encoded PowerShell*: `process.command_line : *-enc*`
+  - *Scheduled task creation (4698) by name*: `event.code : "4698" and winlog.event_data.TaskName : *SystemUpdater*`
+- **Commands** (Discover, ES|QL):
+  - `FROM logs-* | WHERE CIDR_MATCH(destination.ip, "203.0.113.66/32") | STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY host.name | SORT hits DESC`
