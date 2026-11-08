@@ -1571,6 +1571,16 @@ $HtmlContent = @'
                 el.innerHTML = '<span style="margin-right:8px;">&#9888;</span>Collected as <strong>' + aiEsc(ctx.User) + '</strong> (' + aiEsc(ctx.Privilege) + ') &ndash; ' + gap;
             }
             el.innerHTML += eventTruncationHtml(ctx);
+            el.innerHTML += legacyTimeHtml(currentComputer);
+        }
+
+        // Windows datasets from collectors before TimeFormat=UTC recorded file/registry artifact
+        // times (Prefetch, Amcache, SRUM, Jump Lists, Recycle Bin, LastLogon, PS history) in
+        // host-local time labeled "Z"; event-log, BAM and UserAssist times were already UTC.
+        function legacyTimeHtml(sys) {
+            const ctx = (sys && sys.CollectionContext) || {};
+            if (!sys || datasetIsLinux(sys) || ctx.TimeFormat === 'UTC') return '';
+            return `<div style="margin-top:6px;"><span style="margin-right:8px;">&#9432;</span>Collected by an older version: file/registry artifact times (Prefetch, Amcache, SRUM, Jump Lists, Recycle Bin, LastLogon, PowerShell history) are <strong>host-local time</strong> despite the "Z" suffix. Event-log, BAM and UserAssist times are UTC. Re-collect for consistent UTC.</div>`;
         }
 
         // Windows event logs are collected with a budget per (log, event ID). When an ID hits it,

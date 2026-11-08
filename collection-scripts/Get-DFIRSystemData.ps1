@@ -25,6 +25,14 @@ if ($EventDaysMap.ContainsKey($env:COMPUTERNAME)) {
 $CollectionStartTime = Get-Date   # DateTime for Get-WinEvent Start/EndTime filters
 $CollectionStartUtc = $CollectionStartTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
+# Every artifact time is emitted as true UTC ("...Z"). File-system / registry DateTimes are
+# local, and .ToString("...Z") on a local DateTime only appends a literal "Z" - convert first.
+function ConvertTo-UtcString {
+    param($Value)
+    if ($null -eq $Value -or "$Value" -eq '') { return "" }
+    try { return ([DateTime]$Value).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") } catch { return "$Value" }
+}
+
 $Results = @{
     ComputerName = $env:COMPUTERNAME
     PSComputerName = $env:COMPUTERNAME
@@ -73,6 +81,9 @@ $Results = @{
             # having a true-UTC Timestamp (older Windows builds stamped local time as "Z").
             ProcessId    = $PID
             StartTimeUtc = $CollectionStartUtc
+            # Artifact times (Prefetch, Amcache, SRUM, Jump Lists, Recycle Bin, LastLogon, ...)
+            # are true UTC. Absent on older datasets, where they were host-local labeled "Z".
+            TimeFormat   = "UTC"
         }
     )
 }
@@ -210,7 +221,7 @@ try {
 
 try {
     # 5. Local Users and Groups
-    $Users = Get-LocalUser -ErrorAction SilentlyContinue | Select-Object Name, Enabled, Description, @{Name="LastLogon"; Expression={if ($_.LastLogon) { $_.LastLogon.ToString("yyyy-MM-ddTHH:mm:ssZ") } else { "" }}}
+    $Users = Get-LocalUser -ErrorAction SilentlyContinue | Select-Object Name, Enabled, Description, @{Name="LastLogon"; Expression={if ($_.LastLogon) { (ConvertTo-UtcString $_.LastLogon) } else { "" }}}
     $Results.LocalUsers = $Users
 } catch {
     Write-Warning "Failed to collect Local Users: $_"
@@ -585,8 +596,8 @@ try {
             $Prefetch += [PSCustomObject]@{
                 Executable = $PF.Name -replace "-[A-F0-9]+\.pf$",""
                 FileName = $PF.Name
-                CreationTime = $PF.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                LastWriteTime = $PF.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                CreationTime = (ConvertTo-UtcString $PF.CreationTime)
+                LastWriteTime = (ConvertTo-UtcString $PF.LastWriteTime)
                 Length = $PF.Length
                 RunCount = 1
                 Source = "Windows Prefetch"
@@ -601,7 +612,7 @@ try {
         if (Test-Path $HistPath) {
             $HistInfo = Get-Item $HistPath
             if ($HistInfo.LastWriteTime -ge $CutoffDate) {
-                $HistTime = $HistInfo.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                $HistTime = (ConvertTo-UtcString $HistInfo.LastWriteTime)
                 try {
                     $Commands = Get-Content $HistPath -ErrorAction SilentlyContinue
                     if ($Commands) {
@@ -713,8 +724,8 @@ try {
                 $Results.ExecutionEvidence += [PSCustomObject]@{
                     Executable = $ADF.Name
                     FileName = $User.Name
-                    CreationTime = $ADF.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                    LastWriteTime = $ADF.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    CreationTime = (ConvertTo-UtcString $ADF.CreationTime)
+                    LastWriteTime = (ConvertTo-UtcString $ADF.LastWriteTime)
                     Length = $ADF.Length
                     RunCount = $null
                     Source = "JumpList"
@@ -730,8 +741,8 @@ try {
         $Results.ExecutionEvidence += [PSCustomObject]@{
             Executable = "Amcache.hve (Metadata)"
             FileName = $AmcacheFile.FullName
-            CreationTime = $AmcacheFile.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
-            LastWriteTime = $AmcacheFile.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            CreationTime = (ConvertTo-UtcString $AmcacheFile.CreationTime)
+            LastWriteTime = (ConvertTo-UtcString $AmcacheFile.LastWriteTime)
             Length = $AmcacheFile.Length
             RunCount = $null
             Source = "Amcache"
@@ -745,8 +756,8 @@ try {
         $Results.ExecutionEvidence += [PSCustomObject]@{
             Executable = "SRUDB.dat (Metadata)"
             FileName = $SRUMFile.FullName
-            CreationTime = $SRUMFile.CreationTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
-            LastWriteTime = $SRUMFile.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            CreationTime = (ConvertTo-UtcString $SRUMFile.CreationTime)
+            LastWriteTime = (ConvertTo-UtcString $SRUMFile.LastWriteTime)
             Length = $SRUMFile.Length
             RunCount = $null
             Source = "SRUM"
@@ -1084,7 +1095,7 @@ try {
             $version = [BitConverter]::ToInt64($bytes, 0)
             $size = [BitConverter]::ToInt64($bytes, 8)
             $delTimeRaw = [BitConverter]::ToInt64($bytes, 16)
-            $delTime = [DateTime]::FromFileTime($delTimeRaw).ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $delTime = [DateTime]::FromFileTimeUtc($delTimeRaw).ToString("yyyy-MM-ddTHH:mm:ssZ")
             
             $path = ""
             if ($version -eq 1 -and $bytes.Length -ge 544) {
@@ -1178,7 +1189,7 @@ try {
             Value = "$($t.ThreatName)"
             Severity = "$($t.SeverityID)"
             Active = "$($t.IsActive)"
-            LastDetected = "$($t.LastThreatStatusChangeTime)"
+            LastDetected = (ConvertTo-UtcString $t.LastThreatStatusChangeTime)
             Source = "Defender Detections"
         }
     }
