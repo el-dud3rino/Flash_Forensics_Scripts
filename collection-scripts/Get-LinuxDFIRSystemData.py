@@ -112,7 +112,14 @@ results["CollectionContext"] = {
     "Platform": "Linux",
     "User": _cuser,
     "IsElevated": _is_root,
-    "Privilege": "root" if _is_root else "non-root user"
+    "Privilege": "root" if _is_root else "non-root user",
+    # Self-identification so the dashboard can hide this run's own traces: our process
+    # tree (ps/sh children, the sshd session), and the analyst's SSH socket/auth lines
+    # (SSH_CLIENT = "<client ip> <client port> <server port>").
+    "ProcessId": str(os.getpid()),
+    "ParentProcessId": str(os.getppid()),
+    "SshClient": os.environ.get("SSH_CLIENT", ""),
+    "StartTimeUtc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 }
 
 # 0. System Info

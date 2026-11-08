@@ -61,6 +61,11 @@ $Results = @{
             User       = "$env:USERDOMAIN\$env:USERNAME"
             IsElevated = $ctxAdmin
             Privilege  = if ($ctxAdmin) { "Administrator" } else { "Standard User" }
+            # Self-identification so the dashboard can hide this run's own traces
+            # (process tree, sockets, logon/4688/4103 events). StartTimeUtc is true UTC;
+            # the dataset Timestamp above is local time.
+            ProcessId    = $PID
+            StartTimeUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         }
     )
 }

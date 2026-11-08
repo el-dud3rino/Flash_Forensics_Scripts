@@ -11,6 +11,7 @@ An agentless Digital Forensics and Incident Response (DFIR) collection tool buil
 - **Smart Temporal Filtering**: Automatically scales data collection windows (e.g., pulling 5 days of event logs/execution evidence for a new host, but only 2 days for previously scanned hosts) to drastically reduce collection time and duplicate data.
 - **Analyst Collection Log**: Automatically maintains a timestamped CSV log (`Analyst_Collection_Log_YYYY-MM-DD.csv`) mapping hostnames, OS types, execution duration, and statuses.
 - **Triage Flagging & Analyst Notes**: Bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions. The Flagged Items tab includes an editable **Analyst Notes** column that saves your notes locally. You can export the flagged items and your notes to a CSV for incident reports.
+- **Hide Tool-Run Artifacts (on by default)**: Running a collection leaves traces on the target: its own PowerShell script-block log entries (4104/4103), the analyst's WinRM/SSH logon, the collector's process tree and sockets, and SSH/sudo auth lines. The dashboard recognizes these and hides them so they don't bury real findings. A note above each table shows how many were hidden; untick **Options > Hide Tool-Run Artifacts** to show them. See **[Tool-Run Artifacts](#tool-run-artifacts)** below.
 - **Hunt Query Builder (KQL / ES|QL)**: Turn your flagged items into an enterprise-wide IOC sweep for an ELK stack or Security Onion. Hashes, IPs, domains, paths, command lines, accounts and more are mapped to ECS fields and emitted as a copy-ready KQL or ES|QL query. See **[Hunt Query Builder](#hunt-query-builder-kql--esql)** below.
 - **Dynamic UI**: Resizable table columns that persist across tab switches and pagination, plus a **Columns** button to show/hide individual columns per tab — each tab remembers its own hidden columns across navigation.
 - **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, sorting unique outliers to the top.
@@ -121,6 +122,24 @@ If you run the collection script on the same system multiple times, the dashboar
 2. Click the **Diff Timelines** button that appears in the top navigation bar.
 3. Select a **Base** (older) dataset and a **Target** (newer) dataset.
 4. The dashboard will automatically compare the two datasets and inject a **Diff** column into the tables. This allows you to see which artifacts were `+ Added`, `- Removed`, or `Unchanged`. You can also filter directly on these statuses using the column dropdown!
+
+## Tool-Run Artifacts
+
+Collecting from a host changes it a little, and on a host with PowerShell Script Block Logging enabled the collector's own script can fill the Event Logs tab. **Options > Hide Tool-Run Artifacts** is on by default and hides traces created by Flash Forensics itself. A note above each table (e.g. *"4 tool-run artifacts hidden"*) tells you how many rows were hidden, so nothing disappears silently. Untick the option to see everything.
+
+| What is hidden | How it is recognized |
+| --- | --- |
+| PowerShell 4104 script-block entries for the collector (every part of a split script and its nested `{ }` blocks) | The logged text is a verbatim slice of `Get-DFIRSystemData.ps1`, which is embedded in the dashboard at build time. This also catches entries left by **earlier** collection runs. Local runs are also matched by the logged script `Path` (`Invoke-DFIRCollection.ps1` / `Get-DFIRSystemData.ps1`). |
+| PowerShell 4104 entries for modules the collector auto-loads (`Get-NetTCPConnection`, `Get-ScheduledTask`, `Get-Smb*` ... generate dozens of `__cmdletization_` blocks) | Generated CDXML module code logged at or after the run's start time |
+| PowerShell 4103 module-logging entries | `ContextInfo` names the collector script, or the collecting user during the run |
+| Logon events (4624 / 4672 / 4634 / 4648) and process creation (4688) | Collecting user, at or after the run's start time; 4688 children of `wsmprovhost.exe` during the run |
+| Collector process tree | Its own PID and all descendants (Windows `wsmprovhost.exe`; Linux `sshd: user [priv]` -> `sshd: user@notty` -> `python3 -` -> `sh -c ps ...`; named `sshd-session` on OpenSSH 9.8+) |
+| Network connections | Sockets owned by the collector's processes, the analyst's WinRM (5985/5986) connection, and the exact SSH client IP:port |
+| Linux auth / sudo lines | `Accepted ... from <ip> port <port>` for this SSH session, the matching PAM session lines, and `sudo ... COMMAND=python3 -` |
+
+The collectors record their own PID and true UTC start time in `CollectionContext`, and the Linux collector also records `SSH_CLIENT`. Datasets collected before this feature lack those fields, so for them only the signature-based rules apply (script-block text, the `python3 -` process tree, sudo lines).
+
+> **Analyst note:** hiding is display-only. Raw JSON/CSV exports and `data.js` still contain everything. If you suspect an attacker has deliberately reused the collector's account or session, untick the option and review the rows it hides.
 
 ## Hunt Query Builder (KQL / ES|QL)
 
