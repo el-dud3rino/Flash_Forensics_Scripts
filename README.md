@@ -11,6 +11,7 @@ An agentless Digital Forensics and Incident Response (DFIR) collection tool buil
 - **Smart Temporal Filtering**: Automatically scales data collection windows (e.g., pulling 5 days of event logs/execution evidence for a new host, but only 2 days for previously scanned hosts) to drastically reduce collection time and duplicate data.
 - **Analyst Collection Log**: Automatically maintains a timestamped CSV log (`Analyst_Collection_Log_YYYY-MM-DD.csv`) mapping hostnames, OS types, execution duration, and statuses.
 - **Triage Flagging & Analyst Notes**: Bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions. The Flagged Items tab includes an editable **Analyst Notes** column that saves your notes locally. You can export the flagged items and your notes to a CSV for incident reports.
+- **Hunt Query Builder (KQL / ES|QL)**: Turn your flagged items into an enterprise-wide IOC sweep for an ELK stack or Security Onion. Hashes, IPs, domains, paths, command lines, accounts and more are mapped to ECS fields and emitted as a copy-ready KQL or ES|QL query. See **[Hunt Query Builder](#hunt-query-builder-kql--esql)** below.
 - **Dynamic UI**: Resizable table columns that persist across tab switches and pagination, plus a **Columns** button to show/hide individual columns per tab — each tab remembers its own hidden columns across navigation.
 - **Compare Mode (All Hosts)**: Toggle "Compare Mode" in the sidebar to stack data across multiple systems. The dashboard filters out ephemeral noise (like PIDs and Timestamps) to group identical artifacts across systems. Items are automatically sorted by frequency, sorting unique outliers to the top.
 - **Dataset Diff Mode (Single Host)**: Compare changes on a single machine between multiple timelines. Click "Diff Timelines" when viewing a host to select a Base and Target dataset. The dashboard computes the differences, highlighting new items in green (Added) and missing items in red (Removed).
@@ -120,6 +121,69 @@ If you run the collection script on the same system multiple times, the dashboar
 2. Click the **Diff Timelines** button that appears in the top navigation bar.
 3. Select a **Base** (older) dataset and a **Target** (newer) dataset.
 4. The dashboard will automatically compare the two datasets and inject a **Diff** column into the tables. This allows you to see which artifacts were `+ Added`, `- Removed`, or `Unchanged`. You can also filter directly on these statuses using the column dropdown!
+
+## Hunt Query Builder (KQL / ES|QL)
+
+Once you've flagged suspicious items on one host, the next question is usually *"where else is this?"* The **🔎 Build Hunt Query (KQL / ES|QL)** button on the **Flagged** tab answers that by generating a search you can paste straight into Kibana, Discover, or Security Onion Hunt.
+
+1. Flag items with the 🚩 icon on any row (Processes, Network Connections, Scheduled Tasks, Event Logs, etc.).
+2. Open the **Flagged** tab. The builder uses what the tab is showing: the current host, or every host when **Include all hosts and historical datasets** is ticked.
+3. Click **🔎 Build Hunt Query**, tune the indicators, pick **KQL** or **ES|QL**, and click **Copy**.
+
+### What gets extracted
+
+Each flagged row is read according to its artifact type and its indicators are mapped to [ECS](https://www.elastic.co/guide/en/ecs/current/index.html) field names (Elastic Agent, Winlogbeat/Sysmon, and Zeek/Suricata in Security Onion all use ECS):
+
+| Indicator | Example sources | ECS fields searched |
+| --- | --- | --- |
+| SHA256 hashes (lowercased) | Processes, Startup Files, Drivers | `process.hash.sha256`, `file.hash.sha256`, `hash.sha256` (`dll.hash.sha256` off by default) |
+| IP addresses | Network Connections, RDP, Event Logs, Firewall Rules, ARP; IPs/URLs inside command lines, script blocks and event details | `source.ip`, `destination.ip` |
+| Domains | DNS Cache, URLs in command lines/script blocks | `dns.question.name`, `dns.query.name`, `destination.domain` |
+| Executable / file paths | Processes, Services, Tasks, Persistence, Execution Evidence, Startup Files, Recycle Bin | `process.executable`, `file.path` |
+| Process / file names | Same as above | `process.name`, `file.name` |
+| Command-line fragments (contains match) | Processes, Task arguments, Persistence data, 4688 events, PowerShell history | `process.command_line` |
+| Registry value names / data | System Persistence | `registry.value`, `registry.data.strings` |
+| Service / scheduled task names | Services, Scheduled Tasks, 7045/4698 events | `service.name`, `winlog.event_data.ServiceName`, `winlog.event_data.TaskName` |
+| User accounts (`DOMAIN\` stripped) | Users, RDP, Event Logs | `user.name`, `winlog.event_data.TargetUserName` |
+| Container images | Docker Containers | `container.image.name` |
+
+Service/driver paths such as `%SystemRoot%\...` and `\SystemRoot\...` are expanded to `C:\Windows\...` so they line up with logged paths. Rows flagged from **Search Results** have their artifact type inferred from their fields. Items with nothing searchable (e.g. Installed Software) are listed in the builder.
+
+### Tuning the sweep
+
+- **Per-value checkboxes**: untick anything you don't want searched. Values likely to match half the enterprise (e.g. `powershell.exe`, `cmd.exe`, `svchost.exe`, `root`, `Administrator`) are tagged **common** and start unchecked.
+- **Field chips**: click a field name to include/exclude it from the query. Your field choices are remembered.
+- **Exclude source host(s)**: adds a `host.name` exclusion so results show only *other* hosts with the same indicators.
+- **ES|QL options**: set the index pattern (default `logs-*`) and optionally **Summarize hits by host** (`STATS hits, first_seen, last_seen BY host.name`).
+
+### Example output
+
+```kql
+process.hash.sha256 : ("00cdaba812daa2ae4147cd7776e1b7acbc8753d832babf1a2a6966b2622ef03f")
+or source.ip : ("198.51.100.23" or "203.0.113.66")
+or destination.ip : ("198.51.100.23" or "203.0.113.66")
+or process.executable : ("C:\\Users\\Public\\svch0st.exe")
+or process.command_line : (*-enc\ SQBFAFgAKABuAGUAdwAtAG8AYgBqAC4A*)
+or winlog.event_data.TaskName : (*SystemUpdater*)
+```
+
+```esql
+FROM logs-*
+| WHERE process.hash.sha256 IN ("00cdaba812daa2ae4147cd7776e1b7acbc8753d832babf1a2a6966b2622ef03f")
+    OR CIDR_MATCH(destination.ip, "198.51.100.23/32", "203.0.113.66/32")
+    OR process.command_line LIKE "*-enc SQBFAFgAKABuAGUAdwAtAG8AYgBqAC4A*"
+| WHERE host.name IS NULL OR host.name NOT IN ("WIN-CLIENT-01", "win-client-01")
+| STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY host.name
+| SORT hits DESC
+| LIMIT 1000
+```
+
+### Notes
+
+- **KQL** ignores fields that aren't mapped, so it is safe to run against any index pattern. Remember to set the time range in Kibana.
+- **ES|QL** (Elastic 8.11+) fails with `Unknown column` if a field isn't mapped in the target indices. Click that field's chip in the builder to drop it and copy again.
+- Matching on keyword fields (paths, names, users) is **case-sensitive** in both languages; hashes and IPs are normalized.
+- The builder runs entirely in the browser and makes no network calls. Indicators only leave the dashboard when you copy the query.
 
 ## Showing & Hiding Columns
 
