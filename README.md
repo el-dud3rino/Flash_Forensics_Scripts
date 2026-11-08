@@ -8,7 +8,7 @@ An agentless Digital Forensics and Incident Response (DFIR) collection tool buil
 - **Concurrent Execution**: Deploys payloads across multiple systems in parallel utilizing PowerShell background jobs (`Start-Job`) for lightning fast collections.
 - **Fileless Linux Execution**: The Python payload (`Get-LinuxDFIRSystemData.py`) is piped directly into the remote Linux system's memory over SSH. No scripts are dropped to the disk of the target!
 - **Interactive HTML Dashboard**: Automatically generates an HTML dashboard (`index.html`) that works completely offline without a web server. Features a collapsible sidebar to maximize screen real-estate.
-- **Smart Temporal Filtering**: Automatically scales data collection windows (e.g., pulling 5 days of event logs/execution evidence for a new host, but only 2 days for previously scanned hosts) to drastically reduce collection time and duplicate data.
+- **Smart Temporal Filtering**: Automatically scales data collection windows (e.g., pulling 5 days of event logs/execution evidence for a new host, but only 2 days for previously scanned hosts) to drastically reduce collection time and duplicate data. Event logs use a separate budget for each event ID, and the dashboard flags any ID that hit it.
 - **Analyst Collection Log**: Automatically maintains a timestamped CSV log (`Analyst_Collection_Log_YYYY-MM-DD.csv`) mapping hostnames, OS types, execution duration, and statuses.
 - **Triage Flagging & Analyst Notes**: Bookmark suspicious items directly in the dashboard using the 🚩 icon on any row. Flagged items persist across sessions. The Flagged Items tab includes an editable **Analyst Notes** column that saves your notes locally. You can export the flagged items and your notes to a CSV for incident reports.
 - **Hide Tool-Run Artifacts (on by default)**: Running a collection leaves traces on the target: its own PowerShell script-block log entries (4104/4103), the analyst's WinRM/SSH logon, the collector's process tree and sockets, and SSH/sudo auth lines. The dashboard recognizes these and hides them so they don't bury real findings. A note above each table shows how many were hidden; untick **Options > Hide Tool-Run Artifacts** to show them. See **[Tool-Run Artifacts](#tool-run-artifacts)** below.
@@ -90,7 +90,12 @@ $cred = Get-Credential
 
 # Append custom event codes to the collection (e.g., Windows Defender logs)
 .\Invoke-DFIRCollection.ps1 -AdditionalEventCodes @(1116, 1117, 5001)
+
+# Collect a deeper event-log history on busy hosts (default 200 per log per event ID)
+.\Invoke-DFIRCollection.ps1 -ComputerName "WIN-SRV01" -MaxEventsPerEventId 1000
 ```
+
+**Event-log budget:** Windows event logs are collected with a separate budget for each log and event ID (`-MaxEventsPerEventId`, default 200). That way a noisy ID (e.g. 4624/4672 SYSTEM logons, or 4104 on hosts with script block logging) can't push rare high-value events (7045, 4698, 4720...) out of the collection window. Events logged *while the collector runs* are fetched separately, so its own noise never uses up the history budget. When an ID reaches its budget, the dashboard's collection banner says which IDs were truncated and how far back they reach, and suggests a larger value.
 
 ### 3. Remote Linux Collection (SSH)
 Use the `-OS Linux` flag and provide the SSH username. If you aren't using SSH keys, the native Windows SSH client will securely prompt you for the password in the console.

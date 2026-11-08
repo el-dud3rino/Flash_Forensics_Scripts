@@ -10,6 +10,9 @@
     The directory where output files will be saved. Defaults to ".\FlashForensics_Output".
 .PARAMETER Credential
     Optional credentials to use for the remote connection.
+.PARAMETER MaxEventsPerEventId
+    Windows event-log budget per (log, event ID) for history before the run. Default 200.
+    Raise it on busy hosts if the dashboard reports the event window was truncated.
 #>
 [CmdletBinding()]
 param (
@@ -42,7 +45,11 @@ param (
     [switch]$BuildDashboardOnly,
 
     [Parameter(Mandatory=$false)]
-    [int[]]$AdditionalEventCodes = @()
+    [int[]]$AdditionalEventCodes = @(),
+
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(1, 100000)]
+    [int]$MaxEventsPerEventId = 200
 )
 
 if (-not (Test-Path -Path $OutputDirectory)) {
@@ -130,7 +137,7 @@ if ($BuildDashboardOnly) {
                 Write-Warning "Local collection is NOT running elevated. Defender, the Security event log, all-user Recycle Bin, USB history, and BITS will be incomplete. Close this and re-open PowerShell 'As Administrator' for full results."
             }
             try {
-                $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes -CollectionDays 5 -EventDaysMap $EventDaysMap
+                $LocalResult = & $PayloadScript -AdditionalEventCodes $AdditionalEventCodes -CollectionDays 5 -EventDaysMap $EventDaysMap -MaxEventsPerId $MaxEventsPerEventId
                 if ($LocalResult) {
                     $LocalResult | Add-Member -MemberType NoteProperty -Name PSComputerName -Value $env:COMPUTERNAME -Force
                     $Results += $LocalResult
@@ -171,7 +178,7 @@ if ($BuildDashboardOnly) {
         $InvokeParams = @{
             ComputerName = $RemoteComputers
             FilePath = $PayloadScript
-            ArgumentList = @($AdditionalEventCodes, 5, $EventDaysMap)
+            ArgumentList = @($AdditionalEventCodes, 5, $EventDaysMap, $MaxEventsPerEventId)
             ErrorAction = 'SilentlyContinue'
             ErrorVariable = 'InvokeErrors'
         }
@@ -1563,6 +1570,20 @@ $HtmlContent = @'
                 el.style.borderLeft = '4px solid #f59e0b';
                 el.innerHTML = '<span style="margin-right:8px;">&#9888;</span>Collected as <strong>' + aiEsc(ctx.User) + '</strong> (' + aiEsc(ctx.Privilege) + ') &ndash; ' + gap;
             }
+            el.innerHTML += eventTruncationHtml(ctx);
+        }
+
+        // Windows event logs are collected with a budget per (log, event ID). When an ID hits it,
+        // older events of that ID inside the collection window were not collected - say so.
+        function eventTruncationHtml(ctx) {
+            let t = ctx && ctx.EventLogTruncation;
+            if (t && !Array.isArray(t) && Array.isArray(t.value)) t = t.value; // PS 5.1 ConvertTo-Json array wrapper
+            if (t && !Array.isArray(t)) t = [t];
+            if (!t || t.length === 0) return '';
+            const budget = parseInt(ctx.EventBudgetPerId, 10) || 200;
+            const items = t.slice(0, 6).map(x => `<strong>${aiEsc(x.EventId)}</strong> (${aiEsc(x.LogName)}, oldest kept ${aiEsc(x.OldestReturnedUtc)})`).join(', ');
+            const more = t.length > 6 ? ` and ${t.length - 6} more` : '';
+            return `<div style="margin-top:6px;"><span style="margin-right:8px;">&#9888;</span>Event log window truncated: ${items}${more} reached the ${budget}-event budget, so older events of those IDs were not collected. Re-run with <code>-MaxEventsPerEventId ${budget * 5}</code> for a fuller window.</div>`;
         }
 
         function computeDiff(baseArr, targetArr, tabName) {

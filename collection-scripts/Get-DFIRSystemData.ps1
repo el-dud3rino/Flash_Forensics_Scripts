@@ -2,7 +2,9 @@
 param(
     [int[]]$AdditionalEventCodes = @(),
     [int]$CollectionDays = 5,
-    [hashtable]$EventDaysMap = @{}
+    [hashtable]$EventDaysMap = @{},
+    # Event-log budget per (log, event ID) for history before this run started.
+    [int]$MaxEventsPerId = 200
 )
 
 if ($EventDaysMap.ContainsKey($env:COMPUTERNAME)) {
@@ -20,7 +22,8 @@ if ($EventDaysMap.ContainsKey($env:COMPUTERNAME)) {
 
 # One UTC clock reading for both the dataset Timestamp and CollectionContext.StartTimeUtc.
 # (Get-Date alone is local time; a literal "Z" in the format string does not convert it.)
-$CollectionStartUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$CollectionStartTime = Get-Date   # DateTime for Get-WinEvent Start/EndTime filters
+$CollectionStartUtc = $CollectionStartTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 $Results = @{
     ComputerName = $env:COMPUTERNAME
@@ -465,7 +468,35 @@ try {
         $TargetIds += $AdditionalEventCodes
     }
     [DateTime]$Cutoff = (Get-Date).AddDays(-$CollectionDays)
-    $Events = Get-WinEvent -FilterHashtable @{LogName='Security','System','Microsoft-Windows-PowerShell/Operational'; Id=$TargetIds; StartTime=$Cutoff} -MaxEvents 500 -ErrorAction SilentlyContinue
+    # Budget per (log, event ID) instead of one shared cap: a noisy ID (4624/4672 SYSTEM
+    # logons, 4104 on hosts with script block logging) can no longer push rare high-value
+    # events (7045, 4698, 4720, ...) out of the window, and one busy log can't crowd out another.
+    # Events logged while THIS collector runs (its own CDXML module loads, WinRM logon, 4688s)
+    # are fetched separately with a small cap, so they never consume the history budget; they
+    # are still collected and the dashboard hides them as tool-run artifacts.
+    $EventLogNames = @('Security', 'System', 'Microsoft-Windows-PowerShell/Operational')
+    $MaxRunEventsPerId = 100
+    $EventTruncation = @()
+    $EventIds = @($TargetIds | Select-Object -Unique)
+    $Events = foreach ($LogName in $EventLogNames) {
+        foreach ($Id in $EventIds) {
+            $Hist = @(Get-WinEvent -FilterHashtable @{LogName=$LogName; Id=$Id; StartTime=$Cutoff; EndTime=$CollectionStartTime} -MaxEvents $MaxEventsPerId -ErrorAction SilentlyContinue)
+            if ($Hist.Count -ge $MaxEventsPerId) {
+                $EventTruncation += [PSCustomObject]@{
+                    LogName           = $LogName
+                    EventId           = $Id
+                    Returned          = $Hist.Count
+                    OldestReturnedUtc = $Hist[-1].TimeCreated.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                }
+            }
+            $Hist
+            Get-WinEvent -FilterHashtable @{LogName=$LogName; Id=$Id; StartTime=$CollectionStartTime} -MaxEvents $MaxRunEventsPerId -ErrorAction SilentlyContinue
+        }
+    }
+    $Events = @($Events | Sort-Object TimeCreated -Descending)
+    # Tell the analyst when the window was cut short, instead of silently losing older events.
+    $Results.CollectionContext | Add-Member -NotePropertyName EventBudgetPerId -NotePropertyValue $MaxEventsPerId -Force
+    $Results.CollectionContext | Add-Member -NotePropertyName EventLogTruncation -NotePropertyValue @($EventTruncation) -Force
     $ParsedEvents = @(foreach ($E in $Events) {
         $BaseProps = [ordered]@{
             EventTime = $E.TimeCreated
